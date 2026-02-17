@@ -206,28 +206,30 @@ class CallDetector:
             if exists (process "zoom.us") then
                 set windowList to name of every window of process "zoom.us"
                 repeat with windowName in windowList
-                    if windowName contains "Zoom Meeting" or windowName contains "meeting" or windowName contains "screen" or windowName contains "Screen" then
+                    -- Check for meeting-specific window titles
+                    if windowName contains "Zoom Meeting" then
                         return "YES"
                     end if
-                    if windowName starts with "Zoom" and windowName contains "(" then
+                    -- Check for participant names in title (e.g., "John Doe's Zoom Meeting")
+                    if windowName contains "Meeting" and windowName does not contain "Zoom Workplace" then
+                        return "YES"
+                    end if
+                    -- Check for meeting with participant count (e.g., "Zoom (3)")
+                    if windowName starts with "Zoom" and windowName contains "(" and windowName does not contain "Workplace" then
                         return "YES"
                     end if
                 end repeat
-                set windowCount to count of windows of process "zoom.us"
-                if windowCount >= 2 then
-                    return "YES"
-                end if
             end if
             return "NO"
         end tell
         '''
-        
+
         result = self._run_script(script)
         is_meeting = result == "YES"
-        
+
         if self.debug:
             print(f"  [DEBUG] Zoom: {is_meeting}")
-        
+
         return is_meeting
     
     def check_teams_status(self):
@@ -261,49 +263,38 @@ class CallDetector:
     
     def check_telegram_status(self):
         """
-        Check if Telegram has a call using microphone detection
+        Check if Telegram has a call using window title detection
 
-        NOTE: This uses microphone indicator detection from Control Center.
-        Since Telegram doesn't use the microphone except during calls,
-        this is a reliable indicator when Telegram is running.
+        NOTE: Checks for call-related window titles. Telegram call windows
+        typically have specific titles when a call is active.
         """
-        # Combined check: Telegram running + microphone active
         script = '''
         tell application "System Events"
-            -- First verify Telegram is running
-            if not (exists (process "Telegram")) then
-                return "NO"
-            end if
+            if exists (process "Telegram") then
+                set windowList to name of every window of process "Telegram"
+                repeat with windowName in windowList
+                    -- Check for call-related keywords in window titles
+                    if windowName contains "Call" or windowName contains "call" or windowName contains "Calling" then
+                        return "YES"
+                    end if
+                end repeat
 
-            -- Check if microphone indicator is visible in Control Center
-            tell process "ControlCenter"
-                if exists then
-                    try
-                        set menuBar to menu bar 1
-                        repeat with currentItem in (menu bar items of menuBar)
-                            try
-                                set itemDesc to description of currentItem
-                                -- Microphone indicator contains "Microphone" in description
-                                if itemDesc contains "Microphone" or itemDesc contains "microphone" then
-                                    -- Mic is active and Telegram is running = likely a call
-                                    -- This is reliable because Telegram only uses mic during calls
-                                    return "YES"
-                                end if
-                            end try
-                        end repeat
-                    end try
+                -- Additional check: if Telegram has 2+ windows, might be a call
+                set windowCount to count of windows of process "Telegram"
+                if windowCount >= 2 then
+                    return "YES"
                 end if
-            end tell
+            end if
+            return "NO"
         end tell
-        return "NO"
         '''
 
-        result = self._run_script(script, timeout=3)
+        result = self._run_script(script)
         is_call = result == "YES"
 
         if self.debug:
             status = "active" if is_call else "not detected"
-            print(f"  [DEBUG] Telegram: {status} (microphone-based)")
+            print(f"  [DEBUG] Telegram: {status} (window-based)")
 
         return is_call
     
