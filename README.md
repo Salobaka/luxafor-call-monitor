@@ -81,10 +81,10 @@ This will test ALL platforms (browsers, Zoom, Teams, Slack, Telegram, WhatsApp) 
 
 ### 3️⃣ Start the Monitor
 ```bash
-python3 luxafor_call_monitor_v7.0.py
+python3 luxafor_call_monitor.py
 ```
 
-**RECOMMENDED**: Use `luxafor_call_monitor_v7.0.py` - optimized for battery and performance!
+**RECOMMENDED**: Use `luxafor_call_monitor.py` - optimized for battery and performance!
 
 When asked, enable debug mode (type `y`) to see detection details.
 
@@ -115,21 +115,26 @@ Press `Ctrl+C` in the Terminal window
 **Version 7.0** uses multiple detection methods with optimized performance:
 
 ### Desktop Apps - Window Title Detection
-**Zoom, Slack, WhatsApp:**
+**Zoom:**
+- Checks for "Zoom Meeting" in window titles
+- Excludes "Zoom Workplace" to avoid false positives
+- Checks participant count format: "Zoom (3)"
+
+**Slack, WhatsApp:**
 - Checks if the app is running
-- Reads window titles to detect active meetings
-- Example: Zoom windows contain "Zoom Meeting" when in a call
+- Reads window titles to detect active meetings/calls
 
-### Desktop Apps - Microphone Detection
+### Desktop Apps - Window Count Detection
 **Telegram:**
-- Detects microphone usage via macOS Control Center indicator
-- More reliable than window title detection for Telegram calls
-- Since Telegram only uses mic during calls, this provides accurate detection
+- Checks window titles for "Call", "call", or "Calling" keywords
+- Also checks if Telegram has 2+ windows (call overlay + main window)
+- Avoids false positives from other apps using microphone
 
-### Desktop Apps - Enhanced Detection
+### Desktop Apps - Window Size Heuristic
 **Microsoft Teams:**
-- Checks for specific call/meeting window patterns
-- Filters out false positives from Activity feed windows
+- Detects custom meeting titles: "Meeting Name | Microsoft Teams"
+- Uses window size to differentiate calls (>800x600) from sidebars
+- Filters out Activity, Chat, Calendar windows
 
 ### Browser Tabs (All platforms)
 - Checks Chrome, Safari, and Edge tabs
@@ -144,7 +149,7 @@ Press `Ctrl+C` in the Terminal window
 
 ### Change Idle Timers
 
-Edit `luxafor_call_monitor_v7.0.py` around line 380:
+Edit `luxafor_call_monitor.py` around line 380:
 
 ```python
 # Time thresholds (in seconds)
@@ -175,7 +180,7 @@ luxafor.set_blue()  # Change to: luxafor.set_color(255, 255, 0)  # Yellow
 
 ### Adjust Performance Settings
 
-Edit around line 350 in `luxafor_call_monitor_v7.0.py`:
+Edit around line 350 in `luxafor_call_monitor.py`:
 
 ```python
 # Current (balanced)
@@ -195,7 +200,7 @@ IDLE_CHECK_INTERVAL = 20  # Check idle every 20 seconds
 
 ### Method 1: Simple Terminal Approach
 1. Open Terminal
-2. Run: `python3 /path/to/luxafor_call_monitor_v7.0.py`
+2. Run: `python3 /path/to/luxafor_call_monitor.py`
 3. Minimize Terminal window
 
 ### Method 2: Create Launch Agent (Advanced)
@@ -211,7 +216,7 @@ IDLE_CHECK_INTERVAL = 20  # Check idle every 20 seconds
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/python3</string>
-        <string>/path/to/luxafor_call_monitor_v7.0.py</string>
+        <string>/path/to/luxafor_call_monitor.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -274,7 +279,7 @@ How v6.1+ detects active huddles:
 3. ✅ Detects active huddle controls vs inactive UI
 
 If still doesn't work:
-1. Enable debug mode: `python3 luxafor_call_monitor_v7.0.py` → type `y`
+1. Enable debug mode: `python3 luxafor_call_monitor.py` → type `y`
 2. Leave the huddle and watch the output
 3. You should see: `[DEBUG] Slack huddle status: INACTIVE`
 
@@ -287,18 +292,19 @@ Version 7.0 has **improved Teams detection**. If it still doesn't work:
 3. **Enable debug mode** in the monitor to see what's being checked
 
 Teams detection looks for:
-- Window titles containing "Meeting", "Call", or "|" character
-- Menu bar items (Teams shows call status there)
+- Window titles ending with " | Microsoft Teams"
+- Window size > 800x600 pixels (meeting windows are large)
+- Excludes Activity, Chat, Calendar windows
 
 ### Zoom Screen Sharing Not Detected
 
-**Fixed in v6.3+!** When you share your screen in Zoom, the window title changes.
+**Fixed in v7.0+!** When you share your screen in Zoom, the window title changes.
 
-How v6.3+ detects Zoom:
-1. Checks for "Zoom Meeting" or "meeting" (regular meetings)
-2. Checks for "screen" or "Screen" (screen sharing)
-3. Checks for "Zoom" + "(" pattern (participant count)
-4. Fallback: Counts windows (2+ windows = in meeting)
+How v7.0+ detects Zoom:
+1. Checks for "Zoom Meeting" (regular meetings)
+2. Checks for "Meeting" without "Zoom Workplace" (custom meeting titles)
+3. Checks for "Zoom" + "(" pattern without "Workplace" (participant count)
+4. Excludes Zoom Workplace window to avoid false positives
 
 ### Telegram/WhatsApp Not Detected
 
@@ -317,7 +323,7 @@ For WhatsApp:
 
 The script detects Zoom meetings by checking window titles. If it's not working:
 
-1. **Enable debug mode** - Run: `python3 luxafor_call_monitor_v7.0.py` and type `y`
+1. **Enable debug mode** - Run: `python3 luxafor_call_monitor.py` and type `y`
 2. **Join a Zoom meeting** and watch the debug output
 3. **Check permissions**:
    - Go to **System Preferences → Security & Privacy → Privacy → Accessibility**
@@ -448,7 +454,7 @@ Even with optimizations, these remain instant:
 
 ## 📝 Files Included
 
-- `luxafor_call_monitor_v7.0.py` - **VERSION 7.0 - OPTIMIZED!** (Use this one!)
+- `luxafor_call_monitor.py` - **VERSION 7.0 - OPTIMIZED!** (Use this one!)
 - `test_all_platforms.py` - Comprehensive platform test
 - `test_browser_detection.py` - Browser detection test
 - `README.md` - Complete documentation (this file)
@@ -459,4 +465,3 @@ Even with optimizations, these remain instant:
 
 **Version**: 7.0
 **Last Updated**: February 2026
-# luxafor-call-monitor
