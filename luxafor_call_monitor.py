@@ -239,13 +239,27 @@ class CallDetector:
             if exists (process "Microsoft Teams") then
                 set windowList to name of every window of process "Microsoft Teams"
                 repeat with windowName in windowList
-                    -- Check for actual call/meeting indicators
+                    -- Check for specific call/meeting indicators
                     if windowName contains "Meeting" or windowName contains " | Call" or windowName contains "Calling" then
                         return "YES"
                     end if
-                    -- Check for meeting with participant names (e.g., "John Doe | Meeting")
-                    if (windowName contains " | Meeting") and (windowName does not contain "Activity") then
-                        return "YES"
+                    -- Check for meeting title format: "Meeting Title | Microsoft Teams"
+                    -- But exclude Activity, Chat, Calendar, and other non-call windows
+                    if windowName contains " | Microsoft Teams" then
+                        if windowName does not contain "Activity" and windowName does not contain "Chat" and windowName does not contain "Calendar" and windowName does not contain "Teams |" then
+                            -- This is likely a meeting window with format "Meeting Name | Microsoft Teams"
+                            -- Additional check: meeting windows are typically larger
+                            try
+                                set w to window windowName of process "Microsoft Teams"
+                                set wSize to size of w
+                                set wWidth to item 1 of wSize
+                                set wHeight to item 2 of wSize
+                                -- Meeting windows are typically larger than 800x600
+                                if wWidth > 800 and wHeight > 600 then
+                                    return "YES"
+                                end if
+                            end try
+                        end if
                     end if
                 end repeat
             end if
