@@ -17,6 +17,52 @@ import sys
 import argparse
 from datetime import datetime
 
+# Hardware constants
+LUXAFOR_VENDOR_ID = 0x04d8
+LUXAFOR_PRODUCT_ID = 0xf372
+
+# Time constants (in seconds)
+IDLE_CACHE_DURATION = 30
+IDLE_THRESHOLD = 30 * 60  # 30 minutes
+OFF_THRESHOLD = 60 * 60   # 1 hour
+MIN_CALL_DURATION = 60    # 1 minute
+
+# Check intervals (in seconds)
+CALL_CHECK_INTERVAL = 3   # Check calls every 3 seconds
+IDLE_CHECK_INTERVAL = 30  # Check idle every 30 seconds
+
+# UI constants
+TITLE_TRUNCATE_LENGTH = 50
+TEAMS_MIN_WINDOW_WIDTH = 800
+TEAMS_MIN_WINDOW_HEIGHT = 600
+
+# Meeting URL patterns
+MEETING_URL_PATTERNS = {
+    "MEET": ("meet.google.com", "Google Meet"),
+    "TEAMS": ("teams.microsoft.com", "Teams"),
+    "ZOOM": ("zoom.us/j/", "Zoom"),
+    "SLACK": ("slack.com/huddle", "Slack")
+}
+
+
+def _format_timestamp():
+    """Format current time as HH:MM:SS"""
+    return datetime.now().strftime('%H:%M:%S')
+
+
+def _format_duration(seconds):
+    """Format duration in seconds to human-readable string"""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
 class LuxaforController:
     """Controls Luxafor USB device using hidapi"""
 
@@ -42,9 +88,6 @@ class LuxaforController:
 
     def connect(self):
         """Connect to Luxafor device"""
-        LUXAFOR_VENDOR_ID = 0x04d8
-        LUXAFOR_PRODUCT_ID = 0xf372
-
         try:
             self.device = self.hid.device()
             self.device.open(LUXAFOR_VENDOR_ID, LUXAFOR_PRODUCT_ID)
@@ -107,7 +150,7 @@ class IdleDetector:
         current_time = time.time()
 
         # Only check every 30 seconds unless forced
-        if not force and (current_time - self.last_idle_check) < 30:
+        if not force and (current_time - self.last_idle_check) < IDLE_CACHE_DURATION:
             return self.cached_idle_seconds
 
         try:
@@ -153,7 +196,7 @@ class IdleDetector:
             is_locked = 'true' in result.stdout.lower()
 
             if self.debug and is_locked:
-                print(f"  [DEBUG] Screen is locked")
+                print("  [DEBUG] Screen is locked")
 
             return is_locked
 
@@ -168,6 +211,16 @@ class CallDetector:
 
     def __init__(self):
         self.debug = False
+
+    def _debug_log(self, platform, status, extra=""):
+        """Log debug information for platform detection"""
+        if self.debug:
+            if isinstance(status, str):
+                status_text = status
+            else:
+                status_text = "active" if status else "not detected"
+            extra_text = f" ({extra})" if extra else ""
+            print(f"  [DEBUG] {platform}: {status_text}{extra_text}")
 
     def _run_script(self, script, timeout=3):
         """
@@ -191,12 +244,11 @@ class CallDetector:
             return result.stdout.strip()
         except subprocess.TimeoutExpired:
             # Timeout usually means app is not responding or not running
-            # This is normal, not an error
             if self.debug:
-                print(f"  [DEBUG] Script timeout (app may not be running)")
+                print("  [DEBUG] Script timeout (app may not be running)")
             return "NO"
         except Exception as e:
-            # Exception means app is not available - this is normal
+            # Exception means app is not available
             if self.debug:
                 print(f"  [DEBUG] Script exception: {e} (app not running)")
             return "NO"
@@ -221,10 +273,7 @@ class CallDetector:
 
         result = self._run_script(script)
         is_active = result == "YES"
-
-        if self.debug:
-            print(f"  [DEBUG] Slack: {is_active}")
-
+        self._debug_log("Slack", is_active)
         return is_active
 
     def check_zoom_status(self):
@@ -282,10 +331,7 @@ class CallDetector:
 
         result = self._run_script(script)
         is_meeting = result == "YES"
-
-        if self.debug:
-            print(f"  [DEBUG] Zoom: {is_meeting}")
-
+        self._debug_log("Zoom", is_meeting)
         return is_meeting
 
     def check_teams_status(self):
@@ -310,8 +356,7 @@ class CallDetector:
                                 set wSize to size of w
                                 set wWidth to item 1 of wSize
                                 set wHeight to item 2 of wSize
-                                -- Meeting windows are typically larger than 800x600
-                                if wWidth > 800 and wHeight > 600 then
+                                if wWidth > {TEAMS_MIN_WINDOW_WIDTH} and wHeight > {TEAMS_MIN_WINDOW_HEIGHT} then
                                     return "YES"
                                 end if
                             end try
@@ -325,116 +370,93 @@ class CallDetector:
 
         result = self._run_script(script)
         is_call = result == "YES"
+        self._debug_log("Teams", is_call)
+        return is_call
 
-        if self.debug:
-            print(f"  [DEBUG] Teams: {is_call}")
+    def _check_messaging_app_call(self, app_name, debug_name=None, extra_info=""):
+        """
+        Generic call detector for messaging apps with window-based detection
 
+        Checks for call-related window titles and multiple windows as indicators.
+        """
+        if debug_name is None:
+            debug_name = app_name
+
+        script = f'''
+        tell application "System Events"
+            if exists (process "{app_name}") then
+                set windowList to name of every window of process "{app_name}"
+                repeat with windowName in windowList
+                    if windowName contains "Call" or windowName contains "call" or windowName contains "Calling" then
+                        return "YES"
+                    end if
+                end repeat
+
+                set windowCount to count of windows of process "{app_name}"
+                if windowCount >= 2 then
+                    return "YES"
+                end if
+            end if
+            return "NO"
+        end tell
+        '''
+
+        result = self._run_script(script)
+        is_call = result == "YES"
+        self._debug_log(debug_name, is_call, extra_info or "window-based")
         return is_call
 
     def check_telegram_status(self):
-        """
-        Check if Telegram has a call using window title detection
-
-        NOTE: Checks for call-related window titles. Telegram call windows
-        typically have specific titles when a call is active.
-        """
-        script = '''
-        tell application "System Events"
-            if exists (process "Telegram") then
-                set windowList to name of every window of process "Telegram"
-                repeat with windowName in windowList
-                    -- Check for call-related keywords in window titles
-                    if windowName contains "Call" or windowName contains "call" or windowName contains "Calling" then
-                        return "YES"
-                    end if
-                end repeat
-
-                -- Additional check: if Telegram has 2+ windows, might be a call
-                set windowCount to count of windows of process "Telegram"
-                if windowCount >= 2 then
-                    return "YES"
-                end if
-            end if
-            return "NO"
-        end tell
-        '''
-
-        result = self._run_script(script)
-        is_call = result == "YES"
-
-        if self.debug:
-            status = "active" if is_call else "not detected"
-            print(f"  [DEBUG] Telegram: {status} (window-based)")
-
-        return is_call
+        """Check if Telegram has a call using window title detection"""
+        return self._check_messaging_app_call("Telegram")
 
     def check_whatsapp_status(self):
         """Check if WhatsApp has a call"""
-        script = '''
-        tell application "System Events"
-            if exists (process "WhatsApp") then
-                set windowList to name of every window of process "WhatsApp"
-                repeat with windowName in windowList
-                    if windowName contains "Call" or windowName contains "Calling" or windowName contains "Ringing" then
-                        return "YES"
-                    end if
-                end repeat
-            end if
-            return "NO"
-        end tell
-        '''
-
-        result = self._run_script(script)
-        is_call = result == "YES"
-
-        if self.debug:
-            print(f"  [DEBUG] WhatsApp: {is_call}")
-
-        return is_call
+        return self._check_messaging_app_call("WhatsApp")
 
     def check_signal_status(self):
         """Check if Signal has a call"""
-        script = '''
-        tell application "System Events"
-            if exists (process "Signal") then
-                set windowList to name of every window of process "Signal"
-                repeat with windowName in windowList
-                    -- Check for call-related keywords in window titles
-                    if windowName contains "Call" or windowName contains "call" or windowName contains "Calling" then
-                        return "YES"
-                    end if
-                end repeat
+        return self._check_messaging_app_call("Signal")
 
-                -- Additional check: if Signal has 2+ windows, might be a call
-                set windowCount to count of windows of process "Signal"
-                if windowCount >= 2 then
-                    return "YES"
-                end if
-            end if
-            return "NO"
-        end tell
-        '''
+    def _format_browser_platform(self, service, display_name, title):
+        """Format browser platform name and truncate title"""
+        # Get service display name from patterns
+        service_name = MEETING_URL_PATTERNS.get(service, (None, service))[1]
+        if service in MEETING_URL_PATTERNS:
+            platform_name = f"{display_name} ({service_name})"
+        else:
+            platform_name = f"{display_name} Browser"
 
-        result = self._run_script(script)
-        is_call = result == "YES"
+        # Truncate title if needed
+        if len(title) > TITLE_TRUNCATE_LENGTH:
+            tab_info = title[:TITLE_TRUNCATE_LENGTH] + "..."
+        else:
+            tab_info = title
 
-        if self.debug:
-            print(f"  [DEBUG] Signal: {is_call}")
-
-        return is_call
+        return platform_name, tab_info
 
     def check_browser_tabs(self):
         """
         Check all browsers for meeting URLs and return tab details
 
         Note: If a browser is not running, the script returns "NO" - this is normal.
-        No errors are raised when browsers are closed.
         """
         browsers = [
             ("Google Chrome", "Chrome"),
             ("Safari", "Safari"),
             ("Microsoft Edge", "Edge")
         ]
+
+        # Build URL checks dynamically from patterns
+        url_checks = []
+        for service, (url_pattern, _) in MEETING_URL_PATTERNS.items():
+            check = (
+                f'if tabURL contains "{url_pattern}" then\n'
+                f'                                return "{service}:" & tabTitle & "|" & tabURL'
+            )
+            url_checks.append(check)
+
+        url_checks_str = "\n                            else ".join(url_checks)
 
         for app_name, display_name in browsers:
             script = f'''
@@ -444,14 +466,7 @@ class CallDetector:
                         repeat with t in tabs of w
                             set tabURL to URL of t
                             set tabTitle to title of t
-                            if tabURL contains "meet.google.com" then
-                                return "MEET:" & tabTitle & "|" & tabURL
-                            else if tabURL contains "teams.microsoft.com" then
-                                return "TEAMS:" & tabTitle & "|" & tabURL
-                            else if tabURL contains "zoom.us/j/" then
-                                return "ZOOM:" & tabTitle & "|" & tabURL
-                            else if tabURL contains "slack.com/huddle" then
-                                return "SLACK:" & tabTitle & "|" & tabURL
+                            {url_checks_str}
                             end if
                         end repeat
                     end repeat
@@ -462,29 +477,13 @@ class CallDetector:
 
             result = self._run_script(script, timeout=5)
 
-            # If browser is not running, result will be "NO" - this is normal
-            if result != "NO" and result != "ERROR" and result != "TIMEOUT":
-                # Parse the result: "SERVICE:Title|URL"
+            if result not in ("NO", "ERROR", "TIMEOUT"):
                 try:
                     service, rest = result.split(":", 1)
-                    title, _ = rest.split("|", 1)  # url not used, just for parsing
-
-                    # Create a nice display name
-                    if service == "MEET":
-                        platform_name = f"{display_name} (Google Meet)"
-                        tab_info = title[:50] + "..." if len(title) > 50 else title
-                    elif service == "TEAMS":
-                        platform_name = f"{display_name} (Teams)"
-                        tab_info = title[:50] + "..." if len(title) > 50 else title
-                    elif service == "ZOOM":
-                        platform_name = f"{display_name} (Zoom)"
-                        tab_info = title[:50] + "..." if len(title) > 50 else title
-                    elif service == "SLACK":
-                        platform_name = f"{display_name} (Slack)"
-                        tab_info = title[:50] + "..." if len(title) > 50 else title
-                    else:
-                        platform_name = f"{display_name} Browser"
-                        tab_info = title[:50] + "..." if len(title) > 50 else title
+                    title, _ = rest.split("|", 1)
+                    platform_name, tab_info = self._format_browser_platform(
+                        service, display_name, title
+                    )
 
                     if self.debug:
                         print(f"  [DEBUG] {display_name}: {service} meeting found")
@@ -492,9 +491,7 @@ class CallDetector:
 
                     return True, platform_name
                 except:  # pylint: disable=bare-except
-                    # Fallback if parsing fails
-                    if self.debug:
-                        print(f"  [DEBUG] {display_name}: Meeting found")
+                    self._debug_log(display_name, "Meeting found")
                     return True, display_name
 
         return False, None
@@ -502,38 +499,23 @@ class CallDetector:
     def is_on_call(self):  # pylint: disable=too-many-return-statements,too-many-branches
         """Main detection logic - returns (is_on_call: bool, platform: str)"""
         if self.debug:
-            print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking call status...")
+            print(f"\n[{_format_timestamp()}] Checking call status...")
 
         # Check each platform
-        if self.check_slack_huddle():
-            if self.debug:
-                print(f"  → ✓ SLACK huddle detected")
-            return True, "Slack Huddle"
+        platforms = [
+            (self.check_slack_huddle, "Slack Huddle", "SLACK huddle"),
+            (self.check_zoom_status, "Zoom", "ZOOM meeting"),
+            (self.check_teams_status, "Microsoft Teams", "TEAMS call"),
+            (self.check_telegram_status, "Telegram", "TELEGRAM call"),
+            (self.check_whatsapp_status, "WhatsApp", "WHATSAPP call"),
+            (self.check_signal_status, "Signal", "SIGNAL call")
+        ]
 
-        if self.check_zoom_status():
-            if self.debug:
-                print(f"  → ✓ ZOOM meeting detected")
-            return True, "Zoom"
-
-        if self.check_teams_status():
-            if self.debug:
-                print(f"  → ✓ TEAMS call detected")
-            return True, "Microsoft Teams"
-
-        if self.check_telegram_status():
-            if self.debug:
-                print(f"  → ✓ TELEGRAM call detected")
-            return True, "Telegram"
-
-        if self.check_whatsapp_status():
-            if self.debug:
-                print(f"  → ✓ WHATSAPP call detected")
-            return True, "WhatsApp"
-
-        if self.check_signal_status():
-            if self.debug:
-                print(f"  → ✓ SIGNAL call detected")
-            return True, "Signal"
+        for check_func, platform_name, debug_msg in platforms:
+            if check_func():
+                if self.debug:
+                    print(f"  → ✓ {debug_msg} detected")
+                return True, platform_name
 
         browser_detected, browser_name = self.check_browser_tabs()
         if browser_detected:
@@ -631,20 +613,11 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
     is_idle = False
     is_off = False
     call_start_time = None
-    current_platform = None  # Track which platform is being used
-
-    # Time thresholds (in seconds)
-    IDLE_THRESHOLD = 30 * 60  # 30 minutes
-    OFF_THRESHOLD = 60 * 60   # 1 hour
-    MIN_CALL_DURATION = 60    # 1 minute minimum to report
-
-    # Check intervals
-    CALL_CHECK_INTERVAL = 3   # Check calls every 3 seconds
-    IDLE_CHECK_INTERVAL = 30  # Check idle every 30 seconds
+    current_platform = None
 
     # Set initial state to green
     luxafor.set_green()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 Available")
+    print(f"[{_format_timestamp()}] 🟢 Available")
 
     # Counters for smart checking
     call_check_counter = 0
@@ -671,8 +644,7 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
                     call_start_time = time.time()
                     current_platform = platform_name
                     platform_display = f" on {platform_name}" if platform_name else ""
-                    timestamp = datetime.now().strftime('%H:%M:%S')
-                    print(f"[{timestamp}] 🔴 On call{platform_display} - DO NOT DISTURB")
+                    print(f"[{_format_timestamp()}] 🔴 On call{platform_display} - DO NOT DISTURB")
                     on_call = True
                     is_idle = False
                     is_off = False
@@ -692,28 +664,16 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
 
                         # Only report calls >= 1 minute
                         if duration_seconds >= MIN_CALL_DURATION:
-                            hours = duration_seconds // 3600
-                            minutes = (duration_seconds % 3600) // 60
-                            seconds = duration_seconds % 60
-
-                            if hours > 0:
-                                duration_str = f"{hours}h {minutes}m"
-                            elif minutes > 0:
-                                duration_str = f"{minutes}m {seconds}s"
-                            else:
-                                duration_str = f"{seconds}s"
-
-                            timestamp = datetime.now().strftime('%H:%M:%S')
+                            duration_str = _format_duration(duration_seconds)
                             print(
-                                f"[{timestamp}] 🟢 Available{platform_info} "
+                                f"[{_format_timestamp()}] 🟢 Available{platform_info} "
                                 f"(call ended - duration: {duration_str})"
                             )
                         else:
-                            timestamp = datetime.now().strftime('%H:%M:%S')
+                            timestamp = _format_timestamp()
                             print(f"[{timestamp}] 🟢 Available{platform_info} (call ended)")
                     else:
-                        timestamp = datetime.now().strftime('%H:%M:%S')
-                        print(f"[{timestamp}] 🟢 Available{platform_info} (call ended)")
+                        print(f"[{_format_timestamp()}] 🟢 Available{platform_info} (call ended)")
 
                     on_call = False
                     call_start_time = None
@@ -727,7 +687,7 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
                             luxafor.set_off()
                             minutes = int(idle_seconds // 60)
                             reason = "screen locked" if screen_locked else f"{minutes} min idle"
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚫ Off ({reason})")
+                            print(f"[{_format_timestamp()}] ⚫ Off ({reason})")
                             is_off = True
                             is_idle = False
 
@@ -736,8 +696,7 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
                         if not is_idle:
                             luxafor.set_blue()
                             minutes = int(idle_seconds // 60)
-                            timestamp = datetime.now().strftime('%H:%M:%S')
-                            print(f"[{timestamp}] 🔵 Idle/Away ({minutes} min inactive)")
+                            print(f"[{_format_timestamp()}] 🔵 Idle/Away ({minutes} min inactive)")
                             is_idle = True
                             is_off = False
 
@@ -745,7 +704,7 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
                         # Active - set green
                         if is_idle or is_off:
                             luxafor.set_green()
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 Available")
+                            print(f"[{_format_timestamp()}] 🟢 Available")
                             is_idle = False
                             is_off = False
 
