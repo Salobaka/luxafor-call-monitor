@@ -335,10 +335,41 @@ class CallDetector:
             print(f"  [DEBUG] WhatsApp: {is_call}")
         
         return is_call
-    
+
+    def check_signal_status(self):
+        """Check if Signal has a call"""
+        script = '''
+        tell application "System Events"
+            if exists (process "Signal") then
+                set windowList to name of every window of process "Signal"
+                repeat with windowName in windowList
+                    -- Check for call-related keywords in window titles
+                    if windowName contains "Call" or windowName contains "call" or windowName contains "Calling" then
+                        return "YES"
+                    end if
+                end repeat
+
+                -- Additional check: if Signal has 2+ windows, might be a call
+                set windowCount to count of windows of process "Signal"
+                if windowCount >= 2 then
+                    return "YES"
+                end if
+            end if
+            return "NO"
+        end tell
+        '''
+
+        result = self._run_script(script)
+        is_call = result == "YES"
+
+        if self.debug:
+            print(f"  [DEBUG] Signal: {is_call}")
+
+        return is_call
+
     def check_browser_tabs(self):
         """
-        Check all browsers for meeting URLs
+        Check all browsers for meeting URLs and return tab details
 
         Note: If a browser is not running, the script returns "NO" - this is normal.
         No errors are raised when browsers are closed.
@@ -356,8 +387,15 @@ class CallDetector:
                     repeat with w in windows
                         repeat with t in tabs of w
                             set tabURL to URL of t
-                            if tabURL contains "meet.google.com" or tabURL contains "teams.microsoft.com" or tabURL contains "zoom.us/j/" or tabURL contains "slack.com/huddle" then
-                                return "YES"
+                            set tabTitle to title of t
+                            if tabURL contains "meet.google.com" then
+                                return "MEET:" & tabTitle & "|" & tabURL
+                            else if tabURL contains "teams.microsoft.com" then
+                                return "TEAMS:" & tabTitle & "|" & tabURL
+                            else if tabURL contains "zoom.us/j/" then
+                                return "ZOOM:" & tabTitle & "|" & tabURL
+                            else if tabURL contains "slack.com/huddle" then
+                                return "SLACK:" & tabTitle & "|" & tabURL
                             end if
                         end repeat
                     end repeat
@@ -369,10 +407,39 @@ class CallDetector:
             result = self._run_script(script, timeout=5)
 
             # If browser is not running, result will be "NO" - this is normal
-            if result == "YES":
-                if self.debug:
-                    print(f"  [DEBUG] {display_name}: Meeting found")
-                return True, display_name
+            if result != "NO" and result != "ERROR" and result != "TIMEOUT":
+                # Parse the result: "SERVICE:Title|URL"
+                try:
+                    service, rest = result.split(":", 1)
+                    title, url = rest.split("|", 1)
+
+                    # Create a nice display name
+                    if service == "MEET":
+                        platform_name = f"{display_name} (Google Meet)"
+                        tab_info = title[:50] + "..." if len(title) > 50 else title
+                    elif service == "TEAMS":
+                        platform_name = f"{display_name} (Teams)"
+                        tab_info = title[:50] + "..." if len(title) > 50 else title
+                    elif service == "ZOOM":
+                        platform_name = f"{display_name} (Zoom)"
+                        tab_info = title[:50] + "..." if len(title) > 50 else title
+                    elif service == "SLACK":
+                        platform_name = f"{display_name} (Slack)"
+                        tab_info = title[:50] + "..." if len(title) > 50 else title
+                    else:
+                        platform_name = f"{display_name} Browser"
+                        tab_info = title[:50] + "..." if len(title) > 50 else title
+
+                    if self.debug:
+                        print(f"  [DEBUG] {display_name}: {service} meeting found")
+                        print(f"  [DEBUG]   Tab: {tab_info}")
+
+                    return True, platform_name
+                except:
+                    # Fallback if parsing fails
+                    if self.debug:
+                        print(f"  [DEBUG] {display_name}: Meeting found")
+                    return True, display_name
 
         return False, None
     
@@ -407,11 +474,16 @@ class CallDetector:
                 print(f"  → ✓ WHATSAPP call detected")
             return True, "WhatsApp"
 
+        if self.check_signal_status():
+            if self.debug:
+                print(f"  → ✓ SIGNAL call detected")
+            return True, "Signal"
+
         browser_detected, browser_name = self.check_browser_tabs()
         if browser_detected:
             if self.debug:
                 print(f"  → ✓ {browser_name} meeting detected")
-            return True, f"{browser_name} Browser"
+            return True, browser_name
 
         if self.debug:
             print("  → No calls detected")

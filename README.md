@@ -20,6 +20,10 @@ Turn your Luxafor **RED** during calls, **GREEN** when available, **BLUE** when 
 - 🎯 **Call platform detection** - Displays which app/platform is being used
   - Example: `🔴 On call on Telegram - DO NOT DISTURB`
   - Example: `🟢 Available [Zoom] (call ended - duration: 15m 30s)`
+- 🏷️ **Browser tab labeling** - Shows which service is active in browser
+  - Example: `🔴 On call on Chrome (Google Meet) - DO NOT DISTURB`
+  - Example: `🟢 Available [Safari (Teams)] (call ended - duration: 45m 12s)`
+- 📱 **Signal support** - Now detects Signal desktop app calls
 
 ## 📊 Status Colors
 
@@ -56,15 +60,16 @@ Turn your Luxafor **RED** during calls, **GREEN** when available, **BLUE** when 
 - ✅ Slack Huddle
 - ✅ Telegram
 - ✅ WhatsApp
+- ✅ Signal
 - ✅ Discord
 - ✅ Skype
 - ✅ FaceTime
 
 **Browsers (Chrome, Safari, Edge):**
-- ✅ Google Meet
-- ✅ Microsoft Teams web
-- ✅ Zoom web
-- ✅ Slack Huddle web
+- ✅ Google Meet (shows tab title)
+- ✅ Microsoft Teams web (shows tab title)
+- ✅ Zoom web (shows tab title)
+- ✅ Slack Huddle web (shows tab title)
 
 ## ⚡ Quick Start
 
@@ -120,9 +125,10 @@ Press `Ctrl+C` in the Terminal window
 - Excludes "Zoom Workplace" to avoid false positives
 - Checks participant count format: "Zoom (3)"
 
-**Slack, WhatsApp:**
+**Slack, WhatsApp, Signal:**
 - Checks if the app is running
 - Reads window titles to detect active meetings/calls
+- Signal also checks for 2+ windows (call overlay detection)
 
 ### Desktop Apps - Window Count Detection
 **Telegram:**
@@ -139,6 +145,8 @@ Press `Ctrl+C` in the Terminal window
 ### Browser Tabs (All platforms)
 - Checks Chrome, Safari, and Edge tabs
 - Looks for meeting URLs (meet.google.com, teams.microsoft.com, etc.)
+- **Shows specific service**: "Chrome (Google Meet)", "Safari (Teams)", etc.
+- Displays tab title in debug mode for easy identification
 
 ### Detection Frequency
 - **Calls**: Checked every **3 seconds** (high priority)
