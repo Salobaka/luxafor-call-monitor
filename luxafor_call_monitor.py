@@ -420,12 +420,12 @@ class CallDetector:
             print(f"\n[{_timestamp()}] Checking call status...")
 
         platforms = [
-            (self.check_slack_huddle, "Slack Huddle"),
-            (self.check_zoom_status, "Zoom"),
-            (self.check_teams_status, "Microsoft Teams"),
-            (self.check_telegram_status, "Telegram"),
-            (self.check_whatsapp_status, "WhatsApp"),
-            (self.check_signal_status, "Signal"),
+            (self.check_slack_huddle, "Slack Huddle (Desktop App)"),
+            (self.check_zoom_status, "Zoom (Desktop App)"),
+            (self.check_teams_status, "Microsoft Teams (Desktop App)"),
+            (self.check_telegram_status, "Telegram (Desktop App)"),
+            (self.check_whatsapp_status, "WhatsApp (Desktop App)"),
+            (self.check_signal_status, "Signal (Desktop App)"),
         ]
         for check_fn, name in platforms:
             if check_fn():
@@ -472,7 +472,7 @@ class StatusMonitor:
         self.call_start_time = time.time()
         self.current_platform = platform_name
         suffix = f" on {platform_name}" if platform_name else ""
-        self.log("🔴", f"On call{suffix} - DO NOT DISTURB")
+        self.log("🔴", f"On call{suffix}")
         self.on_call = True
         self.is_idle = False
         self.is_off = False
