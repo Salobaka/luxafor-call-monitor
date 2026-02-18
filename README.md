@@ -24,6 +24,9 @@ Turn your Luxafor **RED** during calls, **GREEN** when available, **BLUE** when 
   - Example: `🔴 On call on Chrome (Google Meet) - DO NOT DISTURB`
   - Example: `🟢 Available [Safari (Teams)] (call ended - duration: 45m 12s)`
 - 📱 **Signal support** - Now detects Signal desktop app calls
+- 💡 **Brightness control** - Adjustable LED brightness (0-100%, default 75%)
+  - Use `--brightness 50` or set interactively at startup
+  - Perfect for adjusting to room lighting conditions
 
 ## 📊 Status Colors
 
@@ -89,9 +92,16 @@ This will test ALL platforms (browsers, Zoom, Teams, Slack, Telegram, WhatsApp) 
 python3 luxafor_call_monitor.py
 ```
 
+**Optional: Set brightness (0-100, default 75%)**
+```bash
+python3 luxafor_call_monitor.py --brightness 50
+```
+
 **RECOMMENDED**: Use `luxafor_call_monitor.py` - optimized for battery and performance!
 
-When asked, enable debug mode (type `y`) to see detection details.
+When asked:
+- Set LED brightness (press Enter for default 75%)
+- Enable debug mode (type `y`) to see detection details
 
 ### 4️⃣ Join a Call
 That's it! Your Luxafor will automatically turn 🔴 **RED** when you join a call and 🟢 **GREEN** when available.
@@ -154,6 +164,29 @@ Press `Ctrl+C` in the Terminal window
 - **Debug mode** available to see exactly what's being detected
 
 ## ⚙️ Customization
+
+### Adjust LED Brightness
+
+**Method 1: Command-line argument (recommended)**
+```bash
+python3 luxafor_call_monitor.py --brightness 50
+```
+
+**Method 2: Interactive prompt**
+When starting the monitor, enter your preferred brightness (0-100)
+
+**Method 3: Set as default in code**
+Edit the `LuxaforController` initialization (around line 545):
+```python
+luxafor = LuxaforController(brightness=50)  # Change 50 to your preference
+```
+
+**Brightness Examples:**
+- `0` = Off
+- `25` = Very dim (good for dark rooms)
+- `50` = Medium (balanced)
+- `75` = Default (recommended)
+- `100` = Maximum brightness
 
 ### Change Idle Timers
 

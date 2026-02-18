@@ -2,18 +2,32 @@
 """
 Luxafor Call Monitor for macOS - VERSION 7.0 (OPTIMIZED)
 Improved resource efficiency with smart checking intervals
+
+Usage:
+    python3 luxafor_call_monitor.py [--brightness BRIGHTNESS]
+
+Options:
+    --brightness BRIGHTNESS    Set LED brightness (0-100, default: 75)
 """
 
 import subprocess
 import time
 import sys
+import argparse
 from datetime import datetime
 
 class LuxaforController:
     """Controls Luxafor USB device using hidapi"""
-    
-    def __init__(self):
+
+    def __init__(self, brightness=75):
+        """
+        Initialize Luxafor controller
+
+        Args:
+            brightness (int): Brightness level 0-100 (default: 75)
+        """
         self.device = None
+        self.brightness = max(0, min(100, brightness))  # Clamp between 0-100
         try:
             import hid
             self.hid = hid
@@ -39,19 +53,27 @@ class LuxaforController:
             print("Make sure your Luxafor is plugged in via USB")
             sys.exit(1)
     
+    def _apply_brightness(self, value):
+        """Apply brightness scaling to color value"""
+        return int(value * self.brightness / 100)
+
     def set_color(self, red, green, blue, led=0xFF):
-        """Set Luxafor color"""
+        """Set Luxafor color with brightness adjustment"""
         if not self.device:
             return
+        # Apply brightness scaling
+        red = self._apply_brightness(red)
+        green = self._apply_brightness(green)
+        blue = self._apply_brightness(blue)
         data = [0, 1, led, red, green, blue, 0, 0]
         self.device.write(data)
-    
+
     def set_red(self):
         self.set_color(255, 0, 0)
-    
+
     def set_green(self):
         self.set_color(0, 255, 0)
-    
+
     def set_blue(self):
         self.set_color(0, 0, 255)
     
@@ -492,6 +514,20 @@ class CallDetector:
 
 
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        '--brightness',
+        type=int,
+        default=None,
+        metavar='LEVEL',
+        help='Set LED brightness (0-100, default: 75)'
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)")
     print("=" * 60)
@@ -509,12 +545,34 @@ def main():
     print("Press Ctrl+C to stop")
     print("=" * 60)
     print()
-    
+
+    # Handle brightness setting
+    if args.brightness is not None:
+        # Use command-line argument
+        brightness = max(0, min(100, args.brightness))
+        print(f"✓ Brightness set to {brightness}% (from command line)")
+    else:
+        # Ask user interactively
+        print("Set LED brightness (0-100, default 75, or press Enter): ", end='')
+        brightness = 75  # Default
+        try:
+            brightness_input = input().strip()
+            if brightness_input:
+                brightness = int(brightness_input)
+                brightness = max(0, min(100, brightness))  # Clamp between 0-100
+                print(f"✓ Brightness set to {brightness}%")
+            else:
+                print(f"✓ Using default brightness: {brightness}%")
+        except ValueError:
+            print(f"Invalid input. Using default brightness: {brightness}%")
+        except:
+            print(f"Using default brightness: {brightness}%")
+
     # Initialize
-    luxafor = LuxaforController()
+    luxafor = LuxaforController(brightness=brightness)
     call_detector = CallDetector()
     idle_detector = IdleDetector()
-    
+
     # Ask user if they want debug mode
     print("Enable debug mode to see detailed detection info? (y/n): ", end='')
     try:
@@ -525,7 +583,7 @@ def main():
             print("✓ Debug mode enabled")
     except:
         print("Using normal mode")
-    
+
     print()
     
     # State variables
