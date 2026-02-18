@@ -290,7 +290,13 @@ class CallDetector:
         return is_meeting
 
     def check_teams_status(self):
-        """Check if Teams is in a call (uses window size heuristic for custom titles)."""
+        """
+        Check if Teams is in a call.
+
+        Uses separator counting to distinguish active meetings from tab views:
+        - During meeting: "MeetingName | Microsoft Teams" (2 parts)
+        - Post-meeting:   "Chat | MeetingName | Microsoft Teams" (3+ parts = tab view)
+        """
         min_w = TEAMS_MIN_WINDOW_WIDTH
         min_h = TEAMS_MIN_WINDOW_HEIGHT
         script = f'''
@@ -298,20 +304,39 @@ class CallDetector:
             if exists (process "Microsoft Teams") then
                 set windowList to name of every window of process "Microsoft Teams"
                 repeat with windowName in windowList
-                    if windowName contains "Meeting" or windowName contains " | Call" or windowName contains "Calling" then
+                    -- Direct call/meeting indicators
+                    if windowName contains " | Call" or windowName contains "Calling" then
                         return "YES"
                     end if
+
                     if windowName contains " | Microsoft Teams" then
-                        if windowName does not contain "Activity" and windowName does not contain "Chat" and windowName does not contain "Calendar" and windowName does not contain "Teams |" then
-                            try
-                                set w to window windowName of process "Microsoft Teams"
-                                set wSize to size of w
-                                set wW to item 1 of wSize
-                                set wH to item 2 of wSize
-                                if wW > {min_w} and wH > {min_h} then
-                                    return "YES"
-                                end if
-                            end try
+                        -- Count " | " separators to detect tab views
+                        -- 2 parts = "Title | Microsoft Teams" (potential meeting)
+                        -- 3+ parts = "Tab | Title | Microsoft Teams" (tab view, not a meeting)
+                        set AppleScript's text item delimiters to " | "
+                        set titleParts to text items of (windowName as string)
+                        set AppleScript's text item delimiters to ""
+                        set partCount to count of titleParts
+
+                        if partCount = 2 then
+                            set titlePart to item 1 of titleParts
+                            -- Check for "Meeting" keyword in title
+                            if titlePart contains "Meeting" then
+                                return "YES"
+                            end if
+                            -- Custom meeting title: use window size heuristic
+                            -- Exclude known navigation sections
+                            if titlePart is not "Activity" and titlePart is not "Chat" and titlePart is not "Calendar" and titlePart is not "Teams" then
+                                try
+                                    set w to window windowName of process "Microsoft Teams"
+                                    set wSize to size of w
+                                    set wW to item 1 of wSize
+                                    set wH to item 2 of wSize
+                                    if wW > {min_w} and wH > {min_h} then
+                                        return "YES"
+                                    end if
+                                end try
+                            end if
                         end if
                     end if
                 end repeat
