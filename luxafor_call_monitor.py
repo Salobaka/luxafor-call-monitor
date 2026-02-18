@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=c-extension-no-member
 """
 Luxafor Call Monitor for macOS - VERSION 7.0 (OPTIMIZED)
 Improved resource efficiency with smart checking intervals
@@ -38,12 +39,12 @@ class LuxaforController:
             import hid
             self.hid = hid
             self.connect()
-    
+
     def connect(self):
         """Connect to Luxafor device"""
         LUXAFOR_VENDOR_ID = 0x04d8
         LUXAFOR_PRODUCT_ID = 0xf372
-        
+
         try:
             self.device = self.hid.device()
             self.device.open(LUXAFOR_VENDOR_ID, LUXAFOR_PRODUCT_ID)
@@ -52,7 +53,7 @@ class LuxaforController:
             print(f"ERROR: Could not connect to Luxafor: {e}")
             print("Make sure your Luxafor is plugged in via USB")
             sys.exit(1)
-    
+
     def _apply_brightness(self, value):
         """Apply brightness scaling to color value"""
         return int(value * self.brightness / 100)
@@ -69,41 +70,46 @@ class LuxaforController:
         self.device.write(data)
 
     def set_red(self):
+        """Set LED to red (on call - do not disturb)"""
         self.set_color(255, 0, 0)
 
     def set_green(self):
+        """Set LED to green (available)"""
         self.set_color(0, 255, 0)
 
     def set_blue(self):
+        """Set LED to blue (idle/away)"""
         self.set_color(0, 0, 255)
-    
+
     def set_off(self):
+        """Turn off LED (long idle)"""
         self.set_color(0, 0, 0)
-    
+
     def close(self):
+        """Close connection to Luxafor device"""
         if self.device:
             self.device.close()
 
 
 class IdleDetector:
     """Detects user idle time on macOS"""
-    
+
     def __init__(self):
         self.debug = False
         self.last_idle_check = 0
         self.cached_idle_seconds = 0
-    
+
     def get_idle_time_seconds(self, force=False):
         """
         Get idle time in seconds using macOS system APIs
         Cached to reduce system calls
         """
         current_time = time.time()
-        
+
         # Only check every 30 seconds unless forced
         if not force and (current_time - self.last_idle_check) < 30:
             return self.cached_idle_seconds
-        
+
         try:
             result = subprocess.run(
                 ['ioreg', '-c', 'IOHIDSystem'],
@@ -111,46 +117,46 @@ class IdleDetector:
                 text=True,
                 timeout=2
             )
-            
+
             for line in result.stdout.split('\n'):
                 if 'HIDIdleTime' in line:
                     idle_ns = int(line.split('=')[1].strip())
                     self.cached_idle_seconds = idle_ns / 1000000000
                     self.last_idle_check = current_time
-                    
+
                     if self.debug:
                         minutes = int(self.cached_idle_seconds // 60)
                         seconds = int(self.cached_idle_seconds % 60)
                         print(f"  [DEBUG] Idle time: {minutes}m {seconds}s")
-                    
+
                     return self.cached_idle_seconds
-            
+
             return self.cached_idle_seconds
-            
+
         except Exception as e:
             if self.debug:
                 print(f"  [DEBUG] Idle check error: {e}")
             return self.cached_idle_seconds
-    
+
     def is_screen_locked(self):
         """Check if screen is locked (cached for 10 seconds)"""
         try:
             script = 'tell application "System Events" to get running of screen saver preferences'
-            
+
             result = subprocess.run(
                 ['osascript', '-e', script],
                 capture_output=True,
                 text=True,
                 timeout=2
             )
-            
+
             is_locked = 'true' in result.stdout.lower()
-            
+
             if self.debug and is_locked:
                 print(f"  [DEBUG] Screen is locked")
-            
+
             return is_locked
-            
+
         except Exception as e:
             if self.debug:
                 print(f"  [DEBUG] Screen lock check error: {e}")
@@ -159,10 +165,10 @@ class IdleDetector:
 
 class CallDetector:
     """Detects active calls on macOS using multiple methods"""
-    
+
     def __init__(self):
         self.debug = False
-    
+
     def _run_script(self, script, timeout=3):
         """
         Helper to run AppleScript with consistent error handling
@@ -194,7 +200,7 @@ class CallDetector:
             if self.debug:
                 print(f"  [DEBUG] Script exception: {e} (app not running)")
             return "NO"
-    
+
     def check_slack_huddle(self):
         """Check if Slack is in a huddle"""
         script = '''
@@ -212,15 +218,15 @@ class CallDetector:
             end if
         end tell
         '''
-        
+
         result = self._run_script(script)
         is_active = result == "YES"
-        
+
         if self.debug:
             print(f"  [DEBUG] Slack: {is_active}")
-        
+
         return is_active
-    
+
     def check_zoom_status(self):
         """
         Check if Zoom is in a meeting (including screen sharing)
@@ -281,7 +287,7 @@ class CallDetector:
             print(f"  [DEBUG] Zoom: {is_meeting}")
 
         return is_meeting
-    
+
     def check_teams_status(self):
         """Check if Teams is in a call"""
         script = '''
@@ -324,7 +330,7 @@ class CallDetector:
             print(f"  [DEBUG] Teams: {is_call}")
 
         return is_call
-    
+
     def check_telegram_status(self):
         """
         Check if Telegram has a call using window title detection
@@ -361,7 +367,7 @@ class CallDetector:
             print(f"  [DEBUG] Telegram: {status} (window-based)")
 
         return is_call
-    
+
     def check_whatsapp_status(self):
         """Check if WhatsApp has a call"""
         script = '''
@@ -377,13 +383,13 @@ class CallDetector:
             return "NO"
         end tell
         '''
-        
+
         result = self._run_script(script)
         is_call = result == "YES"
-        
+
         if self.debug:
             print(f"  [DEBUG] WhatsApp: {is_call}")
-        
+
         return is_call
 
     def check_signal_status(self):
@@ -461,7 +467,7 @@ class CallDetector:
                 # Parse the result: "SERVICE:Title|URL"
                 try:
                     service, rest = result.split(":", 1)
-                    title, url = rest.split("|", 1)
+                    title, _ = rest.split("|", 1)  # url not used, just for parsing
 
                     # Create a nice display name
                     if service == "MEET":
@@ -485,15 +491,15 @@ class CallDetector:
                         print(f"  [DEBUG]   Tab: {tab_info}")
 
                     return True, platform_name
-                except:
+                except:  # pylint: disable=bare-except
                     # Fallback if parsing fails
                     if self.debug:
                         print(f"  [DEBUG] {display_name}: Meeting found")
                     return True, display_name
 
         return False, None
-    
-    def is_on_call(self):
+
+    def is_on_call(self):  # pylint: disable=too-many-return-statements,too-many-branches
         """Main detection logic - returns (is_on_call: bool, platform: str)"""
         if self.debug:
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking call status...")
@@ -541,7 +547,13 @@ class CallDetector:
         return False, None
 
 
-def main():
+def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    """
+    Main monitoring loop
+
+    Monitors call status across multiple platforms and controls Luxafor LED.
+    Handles idle detection and provides status updates.
+    """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description='Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)',
@@ -593,7 +605,7 @@ def main():
                 print(f"✓ Using default brightness: {brightness}%")
         except ValueError:
             print(f"Invalid input. Using default brightness: {brightness}%")
-        except:
+        except:  # pylint: disable=bare-except
             print(f"Using default brightness: {brightness}%")
 
     # Initialize
@@ -609,11 +621,11 @@ def main():
             call_detector.debug = True
             idle_detector.debug = True
             print("✓ Debug mode enabled")
-    except:
+    except:  # pylint: disable=bare-except
         print("Using normal mode")
 
     print()
-    
+
     # State variables
     on_call = False
     is_idle = False
@@ -625,21 +637,21 @@ def main():
     IDLE_THRESHOLD = 30 * 60  # 30 minutes
     OFF_THRESHOLD = 60 * 60   # 1 hour
     MIN_CALL_DURATION = 60    # 1 minute minimum to report
-    
+
     # Check intervals
     CALL_CHECK_INTERVAL = 3   # Check calls every 3 seconds
     IDLE_CHECK_INTERVAL = 30  # Check idle every 30 seconds
-    
+
     # Set initial state to green
     luxafor.set_green()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 Available")
-    
+
     # Counters for smart checking
     call_check_counter = 0
     idle_check_counter = 0
-    
+
     try:
-        while True:
+        while True:  # pylint: disable=too-many-nested-blocks
             # Always check calls (high priority)
             current_call_status, platform_name = call_detector.is_on_call()
 
@@ -659,11 +671,12 @@ def main():
                     call_start_time = time.time()
                     current_platform = platform_name
                     platform_display = f" on {platform_name}" if platform_name else ""
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔴 On call{platform_display} - DO NOT DISTURB")
+                    timestamp = datetime.now().strftime('%H:%M:%S')
+                    print(f"[{timestamp}] 🔴 On call{platform_display} - DO NOT DISTURB")
                     on_call = True
                     is_idle = False
                     is_off = False
-            
+
             # Priority 2: Not on call - check idle status
             else:
                 # Call ended
@@ -690,16 +703,22 @@ def main():
                             else:
                                 duration_str = f"{seconds}s"
 
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 Available{platform_info} (call ended - duration: {duration_str})")
+                            timestamp = datetime.now().strftime('%H:%M:%S')
+                            print(
+                                f"[{timestamp}] 🟢 Available{platform_info} "
+                                f"(call ended - duration: {duration_str})"
+                            )
                         else:
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 Available{platform_info} (call ended)")
+                            timestamp = datetime.now().strftime('%H:%M:%S')
+                            print(f"[{timestamp}] 🟢 Available{platform_info} (call ended)")
                     else:
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 Available{platform_info} (call ended)")
+                        timestamp = datetime.now().strftime('%H:%M:%S')
+                        print(f"[{timestamp}] 🟢 Available{platform_info} (call ended)")
 
                     on_call = False
                     call_start_time = None
                     current_platform = None
-                
+
                 # Check idle thresholds (only when we have fresh data)
                 if idle_check_counter % IDLE_CHECK_INTERVAL == 0:
                     if idle_seconds >= OFF_THRESHOLD or screen_locked:
@@ -711,16 +730,17 @@ def main():
                             print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚫ Off ({reason})")
                             is_off = True
                             is_idle = False
-                    
+
                     elif idle_seconds >= IDLE_THRESHOLD:
                         # Set blue after 30 minutes
                         if not is_idle:
                             luxafor.set_blue()
                             minutes = int(idle_seconds // 60)
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔵 Idle/Away ({minutes} min inactive)")
+                            timestamp = datetime.now().strftime('%H:%M:%S')
+                            print(f"[{timestamp}] 🔵 Idle/Away ({minutes} min inactive)")
                             is_idle = True
                             is_off = False
-                    
+
                     else:
                         # Active - set green
                         if is_idle or is_off:
@@ -728,17 +748,17 @@ def main():
                             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 Available")
                             is_idle = False
                             is_off = False
-            
+
             # Increment counters
             call_check_counter += CALL_CHECK_INTERVAL
             idle_check_counter += CALL_CHECK_INTERVAL
-            
+
             # Reset idle counter every 30 seconds
             if idle_check_counter >= IDLE_CHECK_INTERVAL:
                 idle_check_counter = 0
-            
+
             time.sleep(CALL_CHECK_INTERVAL)
-            
+
     except KeyboardInterrupt:
         print("\n\nStopping monitor...")
         luxafor.set_off()
