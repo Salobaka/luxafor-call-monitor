@@ -1,0 +1,56 @@
+[MASTER]
+# Use multiple processes to speed up Pylint
+jobs=1
+
+# Allow loading of arbitrary C extensions
+extension-pkg-allow-list=hid
+
+[MESSAGES CONTROL]
+# Disable warnings that are acceptable for this monitoring script
+disable=
+    # Import related - intentional for optional dependency handling
+    import-outside-toplevel,
+    # Naming conventions - UPPERCASE is correct for constants
+    invalid-name,
+    # Exception handling - intentional for robustness in monitoring
+    broad-exception-caught,
+    bare-except,
+    # Subprocess - intentional for detection scripts that may fail
+    subprocess-run-check,
+    # Style preferences that don't affect functionality
+    f-string-without-interpolation,
+    consider-using-in,
+    # Complexity - acceptable for state machine and detection logic
+    too-many-return-statements,
+    too-many-branches,
+    too-many-statements,
+    too-many-locals,
+    too-many-nested-blocks
+
+[REPORTS]
+# Set to yes to display a full report
+reports=no
+
+# Evaluation score
+evaluation=10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10)
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=100
+
+# Maximum number of lines in a module
+max-module-lines=1000
+
+[BASIC]
+# Good variable names
+good-names=i,j,k,ex,Run,_,w,t
+
+[DESIGN]
+# Maximum number of arguments for function / method
+max-args=7
+
+# Maximum number of attributes for a class
+max-attributes=10
+
+# Maximum number of boolean expressions in an if statement
+max-bool-expr=5
