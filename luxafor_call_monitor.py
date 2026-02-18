@@ -387,9 +387,9 @@ class CallDetector:
     def check_browser_tabs(self):
         """Check browsers for meeting URLs; returns (bool, platform_name)."""
         browsers = [
-            ("Google Chrome", "Chrome"),
+            ("Google Chrome", "Google Chrome"),
             ("Safari", "Safari"),
-            ("Microsoft Edge", "Edge"),
+            ("Microsoft Edge", "Microsoft Edge"),
         ]
 
         url_checks = []
@@ -400,19 +400,28 @@ class CallDetector:
             )
         url_block = "\n                            else ".join(url_checks)
 
-        for app_name, display_name in browsers:
+        for process_name, app_name in browsers:
+            # Use System Events to check if browser is actually running
+            # (tell application "X" can LAUNCH the app, causing false positives)
+            check_script = f'''
+            tell application "System Events"
+                return exists (process "{process_name}")
+            end tell
+            '''
+            if self._run_script(check_script) != "true":
+                continue
+
+            display_name = app_name.split()[-1]  # Chrome, Safari, Edge
             script = f'''
             tell application "{app_name}"
-                if it is running then
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            set tabURL to URL of t
-                            set tabTitle to title of t
-                            {url_block}
-                            end if
-                        end repeat
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        set tabURL to URL of t
+                        set tabTitle to title of t
+                        {url_block}
+                        end if
                     end repeat
-                end if
+                end repeat
                 return "NO"
             end tell
             '''
