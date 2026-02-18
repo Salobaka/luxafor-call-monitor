@@ -17,45 +17,56 @@ import sys
 import argparse
 from datetime import datetime
 
-# Hardware constants
+# Hardware
 LUXAFOR_VENDOR_ID = 0x04d8
 LUXAFOR_PRODUCT_ID = 0xf372
 
-# Time constants (in seconds)
+# Timing (seconds)
 IDLE_CACHE_DURATION = 30
-IDLE_THRESHOLD = 30 * 60  # 30 minutes
-OFF_THRESHOLD = 60 * 60   # 1 hour
-MIN_CALL_DURATION = 60    # 1 minute
+IDLE_THRESHOLD = 30 * 60
+OFF_THRESHOLD = 60 * 60
+MIN_CALL_DURATION = 60
+CALL_CHECK_INTERVAL = 3
+IDLE_CHECK_INTERVAL = 30
 
-# Check intervals (in seconds)
-CALL_CHECK_INTERVAL = 3   # Check calls every 3 seconds
-IDLE_CHECK_INTERVAL = 30  # Check idle every 30 seconds
-
-# UI constants
+# UI
 TITLE_TRUNCATE_LENGTH = 50
 TEAMS_MIN_WINDOW_WIDTH = 800
 TEAMS_MIN_WINDOW_HEIGHT = 600
 
-# Meeting URL patterns
+# Browser meeting URL → (url_fragment, display_name)
 MEETING_URL_PATTERNS = {
     "MEET": ("meet.google.com", "Google Meet"),
     "TEAMS": ("teams.microsoft.com", "Teams"),
     "ZOOM": ("zoom.us/j/", "Zoom"),
-    "SLACK": ("slack.com/huddle", "Slack")
+    "SLACK": ("slack.com/huddle", "Slack"),
 }
 
+BANNER = """\
+============================================================
+Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)
+============================================================
+Status Colors:
+  🔴 RED    - On a call (DO NOT DISTURB)
+  🟢 GREEN  - Available
+  🔵 BLUE   - Idle/Away (30+ min inactive)
+  ⚫ OFF    - Long idle (60+ min inactive)
 
-def _format_timestamp():
-    """Format current time as HH:MM:SS"""
+Press Ctrl+C to stop
+============================================================
+"""
+
+
+def _timestamp():
+    """Current time as HH:MM:SS."""
     return datetime.now().strftime('%H:%M:%S')
 
 
 def _format_duration(seconds):
-    """Format duration in seconds to human-readable string"""
+    """Format seconds to human-readable duration string."""
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
-
     if hours > 0:
         return f"{hours}h {minutes}m"
     if minutes > 0:
@@ -63,31 +74,38 @@ def _format_duration(seconds):
     return f"{secs}s"
 
 
+def _truncate(text, length=TITLE_TRUNCATE_LENGTH):
+    """Truncate text with ellipsis if it exceeds length."""
+    if len(text) > length:
+        return text[:length] + "..."
+    return text
+
+
+# ── Luxafor USB Controller ──────────────────────────────────
+
+
 class LuxaforController:
-    """Controls Luxafor USB device using hidapi"""
+    """Controls Luxafor USB device using hidapi."""
 
     def __init__(self, brightness=75):
-        """
-        Initialize Luxafor controller
-
-        Args:
-            brightness (int): Brightness level 0-100 (default: 75)
-        """
         self.device = None
-        self.brightness = max(0, min(100, brightness))  # Clamp between 0-100
+        self.brightness = max(0, min(100, brightness))
         try:
             import hid
             self.hid = hid
             self.connect()
         except ImportError:
             print("ERROR: hidapi not installed. Installing...")
-            subprocess.run([sys.executable, "-m", "pip", "install", "hidapi"], check=True)
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "hidapi"],
+                check=True,
+            )
             import hid
             self.hid = hid
             self.connect()
 
     def connect(self):
-        """Connect to Luxafor device"""
+        """Connect to Luxafor device."""
         try:
             self.device = self.hid.device()
             self.device.open(LUXAFOR_VENDOR_ID, LUXAFOR_PRODUCT_ID)
@@ -98,44 +116,45 @@ class LuxaforController:
             sys.exit(1)
 
     def _apply_brightness(self, value):
-        """Apply brightness scaling to color value"""
+        """Scale a 0-255 colour value by the brightness percentage."""
         return int(value * self.brightness / 100)
 
     def set_color(self, red, green, blue, led=0xFF):
-        """Set Luxafor color with brightness adjustment"""
+        """Set Luxafor color with brightness adjustment."""
         if not self.device:
             return
-        # Apply brightness scaling
         red = self._apply_brightness(red)
         green = self._apply_brightness(green)
         blue = self._apply_brightness(blue)
-        data = [0, 1, led, red, green, blue, 0, 0]
-        self.device.write(data)
+        self.device.write([0, 1, led, red, green, blue, 0, 0])
 
     def set_red(self):
-        """Set LED to red (on call - do not disturb)"""
+        """Set LED to red (on call)."""
         self.set_color(255, 0, 0)
 
     def set_green(self):
-        """Set LED to green (available)"""
+        """Set LED to green (available)."""
         self.set_color(0, 255, 0)
 
     def set_blue(self):
-        """Set LED to blue (idle/away)"""
+        """Set LED to blue (idle/away)."""
         self.set_color(0, 0, 255)
 
     def set_off(self):
-        """Turn off LED (long idle)"""
+        """Turn off LED."""
         self.set_color(0, 0, 0)
 
     def close(self):
-        """Close connection to Luxafor device"""
+        """Close connection to Luxafor device."""
         if self.device:
             self.device.close()
 
 
+# ── Idle Detector ────────────────────────────────────────────
+
+
 class IdleDetector:
-    """Detects user idle time on macOS"""
+    """Detects user idle time on macOS."""
 
     def __init__(self):
         self.debug = False
@@ -143,118 +162,93 @@ class IdleDetector:
         self.cached_idle_seconds = 0
 
     def get_idle_time_seconds(self, force=False):
-        """
-        Get idle time in seconds using macOS system APIs
-        Cached to reduce system calls
-        """
+        """Get idle time in seconds (cached to reduce system calls)."""
         current_time = time.time()
-
-        # Only check every 30 seconds unless forced
         if not force and (current_time - self.last_idle_check) < IDLE_CACHE_DURATION:
             return self.cached_idle_seconds
 
         try:
             result = subprocess.run(
                 ['ioreg', '-c', 'IOHIDSystem'],
-                capture_output=True,
-                text=True,
-                timeout=2
+                capture_output=True, text=True, timeout=2,
             )
-
             for line in result.stdout.split('\n'):
                 if 'HIDIdleTime' in line:
                     idle_ns = int(line.split('=')[1].strip())
-                    self.cached_idle_seconds = idle_ns / 1000000000
+                    self.cached_idle_seconds = idle_ns / 1_000_000_000
                     self.last_idle_check = current_time
-
                     if self.debug:
-                        minutes = int(self.cached_idle_seconds // 60)
-                        seconds = int(self.cached_idle_seconds % 60)
-                        print(f"  [DEBUG] Idle time: {minutes}m {seconds}s")
-
+                        mins = int(self.cached_idle_seconds // 60)
+                        secs = int(self.cached_idle_seconds % 60)
+                        print(f"  [DEBUG] Idle time: {mins}m {secs}s")
                     return self.cached_idle_seconds
-
-            return self.cached_idle_seconds
-
         except Exception as e:
             if self.debug:
                 print(f"  [DEBUG] Idle check error: {e}")
-            return self.cached_idle_seconds
+
+        return self.cached_idle_seconds
 
     def is_screen_locked(self):
-        """Check if screen is locked (cached for 10 seconds)"""
+        """Check if the screen saver is running."""
         try:
-            script = 'tell application "System Events" to get running of screen saver preferences'
-
             result = subprocess.run(
-                ['osascript', '-e', script],
-                capture_output=True,
-                text=True,
-                timeout=2
+                ['osascript', '-e',
+                 'tell application "System Events" to get running of screen saver preferences'],
+                capture_output=True, text=True, timeout=2,
             )
-
             is_locked = 'true' in result.stdout.lower()
-
             if self.debug and is_locked:
                 print("  [DEBUG] Screen is locked")
-
             return is_locked
-
         except Exception as e:
             if self.debug:
                 print(f"  [DEBUG] Screen lock check error: {e}")
             return False
 
 
+# ── Call Detector ────────────────────────────────────────────
+
+
 class CallDetector:
-    """Detects active calls on macOS using multiple methods"""
+    """Detects active calls on macOS using multiple methods."""
 
     def __init__(self):
         self.debug = False
 
     def _debug_log(self, platform, status, extra=""):
-        """Log debug information for platform detection"""
-        if self.debug:
-            if isinstance(status, str):
-                status_text = status
-            else:
-                status_text = "active" if status else "not detected"
-            extra_text = f" ({extra})" if extra else ""
-            print(f"  [DEBUG] {platform}: {status_text}{extra_text}")
+        """Log debug information for platform detection."""
+        if not self.debug:
+            return
+        if isinstance(status, str):
+            status_text = status
+        else:
+            status_text = "active" if status else "not detected"
+        suffix = f" ({extra})" if extra else ""
+        print(f"  [DEBUG] {platform}: {status_text}{suffix}")
 
     def _run_script(self, script, timeout=3):
-        """
-        Helper to run AppleScript with consistent error handling
-
-        Note: Timeouts and errors are normal when apps aren't running.
-        This method silently handles these cases and returns appropriate status.
-        """
+        """Run AppleScript; returns 'NO' when the app isn't running."""
         try:
             result = subprocess.run(
                 ['osascript', '-e', script],
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                capture_output=True, text=True, timeout=timeout,
             )
-            # Check if there was an AppleScript error (app not running, etc)
-            # These are normal, not actual errors - app simply isn't running
             if result.returncode != 0:
-                # App not running or not accessible - this is normal
                 return "NO"
             return result.stdout.strip()
         except subprocess.TimeoutExpired:
-            # Timeout usually means app is not responding or not running
             if self.debug:
                 print("  [DEBUG] Script timeout (app may not be running)")
             return "NO"
         except Exception as e:
-            # Exception means app is not available
             if self.debug:
-                print(f"  [DEBUG] Script exception: {e} (app not running)")
+                print(f"  [DEBUG] Script exception: {e}")
             return "NO"
 
+    # ── Desktop app detectors ────────────────────────────────
+
     def check_slack_huddle(self):
-        """Check if Slack is in a huddle"""
+        """Check if Slack is in a huddle."""
         script = '''
         tell application "System Events"
             if exists (process "Slack") then
@@ -264,99 +258,57 @@ class CallDetector:
                         return "YES"
                     end if
                 end repeat
-                return "NO"
-            else
-                return "NOT_RUNNING"
             end if
+            return "NO"
         end tell
         '''
-
-        result = self._run_script(script)
-        is_active = result == "YES"
+        is_active = self._run_script(script) == "YES"
         self._debug_log("Slack", is_active)
         return is_active
 
     def check_zoom_status(self):
-        """
-        Check if Zoom is in a meeting (including screen sharing)
-
-        Detects various Zoom meeting states:
-        - Regular meetings: "Zoom Meeting"
-        - Screen sharing: "zoom share toolbar", "zoom floating video"
-        - Gallery view: "Zoom" with participant count
-        - Works with any screen resolution (no size checks)
-        """
+        """Check if Zoom is in a meeting (any resolution, with or without screen sharing)."""
         script = '''
         tell application "System Events"
             if exists (process "zoom.us") then
                 set windowList to name of every window of process "zoom.us"
                 repeat with windowName in windowList
                     set lowerName to windowName as string
-
-                    -- Check for meeting-specific window titles (case insensitive)
-                    if windowName contains "Zoom Meeting" then
-                        return "YES"
-                    end if
-
-                    -- Check for screen share indicators (lowercase)
-                    if lowerName contains "zoom share" or lowerName contains "zoom floating video" then
-                        return "YES"
-                    end if
-
-                    -- Check for annotation windows
-                    if lowerName contains "Annotation" and lowerName contains "Zoom" then
-                        return "YES"
-                    end if
-
-                    -- Check for participant names in title (e.g., "John Doe's Zoom Meeting")
-                    if windowName contains "Meeting" and windowName does not contain "Zoom Workplace" then
-                        return "YES"
-                    end if
-
-                    -- Check for meeting with participant count (e.g., "Zoom (3)")
-                    if windowName starts with "Zoom" and windowName contains "(" and windowName does not contain "Workplace" then
-                        return "YES"
-                    end if
+                    if windowName contains "Zoom Meeting" then return "YES"
+                    if lowerName contains "zoom share" or lowerName contains "zoom floating video" then return "YES"
+                    if lowerName contains "Annotation" and lowerName contains "Zoom" then return "YES"
+                    if windowName contains "Meeting" and windowName does not contain "Zoom Workplace" then return "YES"
+                    if windowName starts with "Zoom" and windowName contains "(" and windowName does not contain "Workplace" then return "YES"
                 end repeat
-
-                -- Additional check: multiple Zoom windows often indicates a meeting
-                set windowCount to count of windowList
-                if windowCount >= 3 then
-                    return "YES"
-                end if
+                if (count of windowList) >= 3 then return "YES"
             end if
             return "NO"
         end tell
         '''
-
-        result = self._run_script(script)
-        is_meeting = result == "YES"
+        is_meeting = self._run_script(script) == "YES"
         self._debug_log("Zoom", is_meeting)
         return is_meeting
 
     def check_teams_status(self):
-        """Check if Teams is in a call"""
-        script = '''
+        """Check if Teams is in a call (uses window size heuristic for custom titles)."""
+        min_w = TEAMS_MIN_WINDOW_WIDTH
+        min_h = TEAMS_MIN_WINDOW_HEIGHT
+        script = f'''
         tell application "System Events"
             if exists (process "Microsoft Teams") then
                 set windowList to name of every window of process "Microsoft Teams"
                 repeat with windowName in windowList
-                    -- Check for specific call/meeting indicators
                     if windowName contains "Meeting" or windowName contains " | Call" or windowName contains "Calling" then
                         return "YES"
                     end if
-                    -- Check for meeting title format: "Meeting Title | Microsoft Teams"
-                    -- But exclude Activity, Chat, Calendar, and other non-call windows
                     if windowName contains " | Microsoft Teams" then
                         if windowName does not contain "Activity" and windowName does not contain "Chat" and windowName does not contain "Calendar" and windowName does not contain "Teams |" then
-                            -- This is likely a meeting window with format "Meeting Name | Microsoft Teams"
-                            -- Additional check: meeting windows are typically larger
                             try
                                 set w to window windowName of process "Microsoft Teams"
                                 set wSize to size of w
-                                set wWidth to item 1 of wSize
-                                set wHeight to item 2 of wSize
-                                if wWidth > {TEAMS_MIN_WINDOW_WIDTH} and wHeight > {TEAMS_MIN_WINDOW_HEIGHT} then
+                                set wW to item 1 of wSize
+                                set wH to item 2 of wSize
+                                if wW > {min_w} and wH > {min_h} then
                                     return "YES"
                                 end if
                             end try
@@ -367,96 +319,61 @@ class CallDetector:
             return "NO"
         end tell
         '''
-
-        result = self._run_script(script)
-        is_call = result == "YES"
+        is_call = self._run_script(script) == "YES"
         self._debug_log("Teams", is_call)
         return is_call
 
-    def _check_messaging_app_call(self, app_name, debug_name=None, extra_info=""):
-        """
-        Generic call detector for messaging apps with window-based detection
-
-        Checks for call-related window titles and multiple windows as indicators.
-        """
-        if debug_name is None:
-            debug_name = app_name
-
+    def _check_messaging_app(self, process_name):
+        """Generic detector for messaging apps (window titles + window count)."""
         script = f'''
         tell application "System Events"
-            if exists (process "{app_name}") then
-                set windowList to name of every window of process "{app_name}"
+            if exists (process "{process_name}") then
+                set windowList to name of every window of process "{process_name}"
                 repeat with windowName in windowList
                     if windowName contains "Call" or windowName contains "call" or windowName contains "Calling" then
                         return "YES"
                     end if
                 end repeat
-
-                set windowCount to count of windows of process "{app_name}"
-                if windowCount >= 2 then
+                if (count of windows of process "{process_name}") >= 2 then
                     return "YES"
                 end if
             end if
             return "NO"
         end tell
         '''
-
-        result = self._run_script(script)
-        is_call = result == "YES"
-        self._debug_log(debug_name, is_call, extra_info or "window-based")
+        is_call = self._run_script(script) == "YES"
+        self._debug_log(process_name, is_call, "window-based")
         return is_call
 
     def check_telegram_status(self):
-        """Check if Telegram has a call using window title detection"""
-        return self._check_messaging_app_call("Telegram")
+        """Check if Telegram has a call."""
+        return self._check_messaging_app("Telegram")
 
     def check_whatsapp_status(self):
-        """Check if WhatsApp has a call"""
-        return self._check_messaging_app_call("WhatsApp")
+        """Check if WhatsApp has a call."""
+        return self._check_messaging_app("WhatsApp")
 
     def check_signal_status(self):
-        """Check if Signal has a call"""
-        return self._check_messaging_app_call("Signal")
+        """Check if Signal has a call."""
+        return self._check_messaging_app("Signal")
 
-    def _format_browser_platform(self, service, display_name, title):
-        """Format browser platform name and truncate title"""
-        # Get service display name from patterns
-        service_name = MEETING_URL_PATTERNS.get(service, (None, service))[1]
-        if service in MEETING_URL_PATTERNS:
-            platform_name = f"{display_name} ({service_name})"
-        else:
-            platform_name = f"{display_name} Browser"
-
-        # Truncate title if needed
-        if len(title) > TITLE_TRUNCATE_LENGTH:
-            tab_info = title[:TITLE_TRUNCATE_LENGTH] + "..."
-        else:
-            tab_info = title
-
-        return platform_name, tab_info
+    # ── Browser tab detector ─────────────────────────────────
 
     def check_browser_tabs(self):
-        """
-        Check all browsers for meeting URLs and return tab details
-
-        Note: If a browser is not running, the script returns "NO" - this is normal.
-        """
+        """Check browsers for meeting URLs; returns (bool, platform_name)."""
         browsers = [
             ("Google Chrome", "Chrome"),
             ("Safari", "Safari"),
-            ("Microsoft Edge", "Edge")
+            ("Microsoft Edge", "Edge"),
         ]
 
-        # Build URL checks dynamically from patterns
         url_checks = []
-        for service, (url_pattern, _) in MEETING_URL_PATTERNS.items():
-            check = (
-                f'if tabURL contains "{url_pattern}" then\n'
-                f'                                return "{service}:" & tabTitle & "|" & tabURL'
+        for svc, (url, _) in MEETING_URL_PATTERNS.items():
+            url_checks.append(
+                f'if tabURL contains "{url}" then\n'
+                f'                                return "{svc}:" & tabTitle & "|" & tabURL'
             )
-            url_checks.append(check)
-
-        url_checks_str = "\n                            else ".join(url_checks)
+        url_block = "\n                            else ".join(url_checks)
 
         for app_name, display_name in browsers:
             script = f'''
@@ -466,7 +383,7 @@ class CallDetector:
                         repeat with t in tabs of w
                             set tabURL to URL of t
                             set tabTitle to title of t
-                            {url_checks_str}
+                            {url_block}
                             end if
                         end repeat
                     end repeat
@@ -474,132 +391,203 @@ class CallDetector:
                 return "NO"
             end tell
             '''
-
             result = self._run_script(script, timeout=5)
+            if result in ("NO", "ERROR", "TIMEOUT"):
+                continue
 
-            if result not in ("NO", "ERROR", "TIMEOUT"):
-                try:
-                    service, rest = result.split(":", 1)
-                    title, _ = rest.split("|", 1)
-                    platform_name, tab_info = self._format_browser_platform(
-                        service, display_name, title
-                    )
+            try:
+                svc, rest = result.split(":", 1)
+                title, _ = rest.split("|", 1)
+                svc_label = MEETING_URL_PATTERNS.get(svc, (None, svc))[1]
+                platform_name = f"{display_name} ({svc_label})"
 
-                    if self.debug:
-                        print(f"  [DEBUG] {display_name}: {service} meeting found")
-                        print(f"  [DEBUG]   Tab: {tab_info}")
+                if self.debug:
+                    print(f"  [DEBUG] {display_name}: {svc} meeting found")
+                    print(f"  [DEBUG]   Tab: {_truncate(title)}")
 
-                    return True, platform_name
-                except:  # pylint: disable=bare-except
-                    self._debug_log(display_name, "Meeting found")
-                    return True, display_name
+                return True, platform_name
+            except:  # pylint: disable=bare-except
+                self._debug_log(display_name, "Meeting found")
+                return True, display_name
 
         return False, None
 
-    def is_on_call(self):  # pylint: disable=too-many-return-statements,too-many-branches
-        """Main detection logic - returns (is_on_call: bool, platform: str)"""
+    # ── Aggregated check ─────────────────────────────────────
+
+    def is_on_call(self):
+        """Check all platforms; returns (is_on_call, platform_name)."""
         if self.debug:
-            print(f"\n[{_format_timestamp()}] Checking call status...")
+            print(f"\n[{_timestamp()}] Checking call status...")
 
-        # Check each platform
         platforms = [
-            (self.check_slack_huddle, "Slack Huddle", "SLACK huddle"),
-            (self.check_zoom_status, "Zoom", "ZOOM meeting"),
-            (self.check_teams_status, "Microsoft Teams", "TEAMS call"),
-            (self.check_telegram_status, "Telegram", "TELEGRAM call"),
-            (self.check_whatsapp_status, "WhatsApp", "WHATSAPP call"),
-            (self.check_signal_status, "Signal", "SIGNAL call")
+            (self.check_slack_huddle, "Slack Huddle"),
+            (self.check_zoom_status, "Zoom"),
+            (self.check_teams_status, "Microsoft Teams"),
+            (self.check_telegram_status, "Telegram"),
+            (self.check_whatsapp_status, "WhatsApp"),
+            (self.check_signal_status, "Signal"),
         ]
-
-        for check_func, platform_name, debug_msg in platforms:
-            if check_func():
+        for check_fn, name in platforms:
+            if check_fn():
                 if self.debug:
-                    print(f"  → ✓ {debug_msg} detected")
-                return True, platform_name
+                    print(f"  → ✓ {name} detected")
+                return True, name
 
-        browser_detected, browser_name = self.check_browser_tabs()
-        if browser_detected:
+        detected, browser_name = self.check_browser_tabs()
+        if detected:
             if self.debug:
                 print(f"  → ✓ {browser_name} meeting detected")
             return True, browser_name
 
         if self.debug:
             print("  → No calls detected")
-
         return False, None
 
 
-def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    """
-    Main monitoring loop
+# ── Status Monitor ───────────────────────────────────────────
 
-    Monitors call status across multiple platforms and controls Luxafor LED.
-    Handles idle detection and provides status updates.
-    """
-    # Parse command-line arguments
+
+class StatusMonitor:
+    """Coordinates call detection, idle detection, and LED state."""
+
+    def __init__(self, luxafor, call_detector, idle_detector):
+        self.luxafor = luxafor
+        self.call_detector = call_detector
+        self.idle_detector = idle_detector
+
+        self.on_call = False
+        self.is_idle = False
+        self.is_off = False
+        self.call_start_time = None
+        self.current_platform = None
+        self.idle_counter = 0
+
+    def log(self, emoji, message):
+        """Print a timestamped status line."""
+        print(f"[{_timestamp()}] {emoji} {message}")
+
+    def _handle_call_start(self, platform_name):
+        """Transition to on-call state."""
+        self.luxafor.set_red()
+        self.call_start_time = time.time()
+        self.current_platform = platform_name
+        suffix = f" on {platform_name}" if platform_name else ""
+        self.log("🔴", f"On call{suffix} - DO NOT DISTURB")
+        self.on_call = True
+        self.is_idle = False
+        self.is_off = False
+
+    def _handle_call_end(self):
+        """Transition back to available after a call."""
+        self.luxafor.set_green()
+        tag = f" [{self.current_platform}]" if self.current_platform else ""
+
+        if self.call_start_time:
+            duration = int(time.time() - self.call_start_time)
+            if duration >= MIN_CALL_DURATION:
+                dur = _format_duration(duration)
+                self.log("🟢", f"Available{tag} (call ended - duration: {dur})")
+            else:
+                self.log("🟢", f"Available{tag} (call ended)")
+        else:
+            self.log("🟢", f"Available{tag} (call ended)")
+
+        self.on_call = False
+        self.call_start_time = None
+        self.current_platform = None
+
+    def _handle_idle(self, idle_seconds, screen_locked):
+        """Update LED based on idle thresholds."""
+        if idle_seconds >= OFF_THRESHOLD or screen_locked:
+            if not self.is_off:
+                self.luxafor.set_off()
+                reason = "screen locked" if screen_locked else f"{int(idle_seconds // 60)} min idle"
+                self.log("⚫", f"Off ({reason})")
+                self.is_off = True
+                self.is_idle = False
+
+        elif idle_seconds >= IDLE_THRESHOLD:
+            if not self.is_idle:
+                self.luxafor.set_blue()
+                self.log("🔵", f"Idle/Away ({int(idle_seconds // 60)} min inactive)")
+                self.is_idle = True
+                self.is_off = False
+
+        elif self.is_idle or self.is_off:
+            self.luxafor.set_green()
+            self.log("🟢", "Available")
+            self.is_idle = False
+            self.is_off = False
+
+    def tick(self):
+        """Run one iteration of the monitoring loop."""
+        in_call, platform = self.call_detector.is_on_call()
+
+        # Idle check every IDLE_CHECK_INTERVAL seconds
+        fresh_idle = self.idle_counter == 0
+        idle_secs = self.idle_detector.get_idle_time_seconds(force=fresh_idle)
+        screen_locked = self.idle_detector.is_screen_locked() if fresh_idle else False
+
+        if in_call:
+            if not self.on_call:
+                self._handle_call_start(platform)
+        else:
+            if self.on_call:
+                self._handle_call_end()
+            if fresh_idle:
+                self._handle_idle(idle_secs, screen_locked)
+
+        self.idle_counter = (self.idle_counter + CALL_CHECK_INTERVAL) % IDLE_CHECK_INTERVAL
+
+
+# ── Entry point ──────────────────────────────────────────────
+
+
+def _get_brightness(args):
+    """Resolve brightness from CLI args or interactive prompt."""
+    if args.brightness is not None:
+        brightness = max(0, min(100, args.brightness))
+        print(f"✓ Brightness set to {brightness}% (from command line)")
+        return brightness
+
+    print("Set LED brightness (0-100, default 75, or press Enter): ", end='')
+    try:
+        raw = input().strip()
+        if raw:
+            brightness = max(0, min(100, int(raw)))
+            print(f"✓ Brightness set to {brightness}%")
+            return brightness
+    except ValueError:
+        print("Invalid input. Using default brightness: 75%")
+    except:  # pylint: disable=bare-except
+        pass
+
+    print("✓ Using default brightness: 75%")
+    return 75
+
+
+def main():  # pylint: disable=too-many-locals
+    """Main entry point: parse args, set up components, run loop."""
     parser = argparse.ArgumentParser(
         description='Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)',
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        '--brightness',
-        type=int,
-        default=None,
-        metavar='LEVEL',
-        help='Set LED brightness (0-100, default: 75)'
+        '--brightness', type=int, default=None, metavar='LEVEL',
+        help='Set LED brightness (0-100, default: 75)',
     )
     args = parser.parse_args()
 
-    print("=" * 60)
-    print("Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)")
-    print("=" * 60)
-    print("Status Colors:")
-    print("  🔴 RED    - On a call (DO NOT DISTURB)")
-    print("  🟢 GREEN  - Available")
-    print("  🔵 BLUE   - Idle/Away (30+ min inactive)")
-    print("  ⚫ OFF    - Long idle (60+ min inactive)")
-    print()
-    print("Optimizations in v7.0:")
-    print("  • Idle detection cached (checked every 30s, not every 3s)")
-    print("  • Reduced system calls by ~90%")
-    print("  • Faster, more efficient resource usage")
-    print()
-    print("Press Ctrl+C to stop")
-    print("=" * 60)
-    print()
+    print(BANNER)
+    brightness = _get_brightness(args)
 
-    # Handle brightness setting
-    if args.brightness is not None:
-        # Use command-line argument
-        brightness = max(0, min(100, args.brightness))
-        print(f"✓ Brightness set to {brightness}% (from command line)")
-    else:
-        # Ask user interactively
-        print("Set LED brightness (0-100, default 75, or press Enter): ", end='')
-        brightness = 75  # Default
-        try:
-            brightness_input = input().strip()
-            if brightness_input:
-                brightness = int(brightness_input)
-                brightness = max(0, min(100, brightness))  # Clamp between 0-100
-                print(f"✓ Brightness set to {brightness}%")
-            else:
-                print(f"✓ Using default brightness: {brightness}%")
-        except ValueError:
-            print(f"Invalid input. Using default brightness: {brightness}%")
-        except:  # pylint: disable=bare-except
-            print(f"Using default brightness: {brightness}%")
-
-    # Initialize
     luxafor = LuxaforController(brightness=brightness)
     call_detector = CallDetector()
     idle_detector = IdleDetector()
 
-    # Ask user if they want debug mode
-    print("Enable debug mode to see detailed detection info? (y/n): ", end='')
+    print("Enable debug mode? (y/n): ", end='')
     try:
-        debug_choice = input().strip().lower()
-        if debug_choice == 'y':
+        if input().strip().lower() == 'y':
             call_detector.debug = True
             idle_detector.debug = True
             print("✓ Debug mode enabled")
@@ -607,117 +595,14 @@ def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statem
         print("Using normal mode")
 
     print()
-
-    # State variables
-    on_call = False
-    is_idle = False
-    is_off = False
-    call_start_time = None
-    current_platform = None
-
-    # Set initial state to green
+    monitor = StatusMonitor(luxafor, call_detector, idle_detector)
     luxafor.set_green()
-    print(f"[{_format_timestamp()}] 🟢 Available")
-
-    # Counters for smart checking
-    call_check_counter = 0
-    idle_check_counter = 0
+    monitor.log("🟢", "Available")
 
     try:
-        while True:  # pylint: disable=too-many-nested-blocks
-            # Always check calls (high priority)
-            current_call_status, platform_name = call_detector.is_on_call()
-
-            # Check idle only every 30 seconds (optimization)
-            if idle_check_counter % IDLE_CHECK_INTERVAL == 0:
-                idle_seconds = idle_detector.get_idle_time_seconds(force=True)
-                screen_locked = idle_detector.is_screen_locked()
-            else:
-                # Use cached idle time
-                idle_seconds = idle_detector.get_idle_time_seconds(force=False)
-                screen_locked = False  # Only check screen lock every 30s
-
-            # Priority 1: On a call (overrides everything)
-            if current_call_status:
-                if not on_call:
-                    luxafor.set_red()
-                    call_start_time = time.time()
-                    current_platform = platform_name
-                    platform_display = f" on {platform_name}" if platform_name else ""
-                    print(f"[{_format_timestamp()}] 🔴 On call{platform_display} - DO NOT DISTURB")
-                    on_call = True
-                    is_idle = False
-                    is_off = False
-
-            # Priority 2: Not on call - check idle status
-            else:
-                # Call ended
-                if on_call:
-                    luxafor.set_green()
-
-                    # Build platform info string
-                    platform_info = f" [{current_platform}]" if current_platform else ""
-
-                    # Calculate call duration
-                    if call_start_time:
-                        duration_seconds = int(time.time() - call_start_time)
-
-                        # Only report calls >= 1 minute
-                        if duration_seconds >= MIN_CALL_DURATION:
-                            duration_str = _format_duration(duration_seconds)
-                            print(
-                                f"[{_format_timestamp()}] 🟢 Available{platform_info} "
-                                f"(call ended - duration: {duration_str})"
-                            )
-                        else:
-                            timestamp = _format_timestamp()
-                            print(f"[{timestamp}] 🟢 Available{platform_info} (call ended)")
-                    else:
-                        print(f"[{_format_timestamp()}] 🟢 Available{platform_info} (call ended)")
-
-                    on_call = False
-                    call_start_time = None
-                    current_platform = None
-
-                # Check idle thresholds (only when we have fresh data)
-                if idle_check_counter % IDLE_CHECK_INTERVAL == 0:
-                    if idle_seconds >= OFF_THRESHOLD or screen_locked:
-                        # Turn off after 1 hour or if screen is locked
-                        if not is_off:
-                            luxafor.set_off()
-                            minutes = int(idle_seconds // 60)
-                            reason = "screen locked" if screen_locked else f"{minutes} min idle"
-                            print(f"[{_format_timestamp()}] ⚫ Off ({reason})")
-                            is_off = True
-                            is_idle = False
-
-                    elif idle_seconds >= IDLE_THRESHOLD:
-                        # Set blue after 30 minutes
-                        if not is_idle:
-                            luxafor.set_blue()
-                            minutes = int(idle_seconds // 60)
-                            print(f"[{_format_timestamp()}] 🔵 Idle/Away ({minutes} min inactive)")
-                            is_idle = True
-                            is_off = False
-
-                    else:
-                        # Active - set green
-                        if is_idle or is_off:
-                            luxafor.set_green()
-                            print(f"[{_format_timestamp()}] 🟢 Available")
-                            is_idle = False
-                            is_off = False
-
-            # Increment counters
-            call_check_counter += CALL_CHECK_INTERVAL
-            idle_check_counter += CALL_CHECK_INTERVAL
-
-            # Reset idle counter every 30 seconds
-            if idle_check_counter >= IDLE_CHECK_INTERVAL:
-                idle_check_counter = 0
-
+        while True:
+            monitor.tick()
             time.sleep(CALL_CHECK_INTERVAL)
-
     except KeyboardInterrupt:
         print("\n\nStopping monitor...")
         luxafor.set_off()
