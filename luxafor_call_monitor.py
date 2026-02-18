@@ -222,25 +222,53 @@ class CallDetector:
         return is_active
     
     def check_zoom_status(self):
-        """Check if Zoom is in a meeting (including screen sharing)"""
+        """
+        Check if Zoom is in a meeting (including screen sharing)
+
+        Detects various Zoom meeting states:
+        - Regular meetings: "Zoom Meeting"
+        - Screen sharing: "zoom share toolbar", "zoom floating video"
+        - Gallery view: "Zoom" with participant count
+        - Works with any screen resolution (no size checks)
+        """
         script = '''
         tell application "System Events"
             if exists (process "zoom.us") then
                 set windowList to name of every window of process "zoom.us"
                 repeat with windowName in windowList
-                    -- Check for meeting-specific window titles
+                    set lowerName to windowName as string
+
+                    -- Check for meeting-specific window titles (case insensitive)
                     if windowName contains "Zoom Meeting" then
                         return "YES"
                     end if
+
+                    -- Check for screen share indicators (lowercase)
+                    if lowerName contains "zoom share" or lowerName contains "zoom floating video" then
+                        return "YES"
+                    end if
+
+                    -- Check for annotation windows
+                    if lowerName contains "Annotation" and lowerName contains "Zoom" then
+                        return "YES"
+                    end if
+
                     -- Check for participant names in title (e.g., "John Doe's Zoom Meeting")
                     if windowName contains "Meeting" and windowName does not contain "Zoom Workplace" then
                         return "YES"
                     end if
+
                     -- Check for meeting with participant count (e.g., "Zoom (3)")
                     if windowName starts with "Zoom" and windowName contains "(" and windowName does not contain "Workplace" then
                         return "YES"
                     end if
                 end repeat
+
+                -- Additional check: multiple Zoom windows often indicates a meeting
+                set windowCount to count of windowList
+                if windowCount >= 3 then
+                    return "YES"
+                end if
             end if
             return "NO"
         end tell
