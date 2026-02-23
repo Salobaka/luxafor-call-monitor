@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # pylint: disable=c-extension-no-member
 """
-Luxafor Call Monitor for macOS - VERSION 7.0 (OPTIMIZED)
-Improved resource efficiency with smart checking intervals
+Luxafor Call Monitor for macOS - VERSION 8.0
+Added yellow "Active" status for busy-at-computer indication
 
 Usage:
     python3 luxafor_call_monitor.py [--brightness BRIGHTNESS]
@@ -23,6 +23,7 @@ LUXAFOR_PRODUCT_ID = 0xf372
 
 # Timing (seconds)
 IDLE_CACHE_DURATION = 30
+ACTIVE_THRESHOLD = 5 * 60
 IDLE_THRESHOLD = 30 * 60
 OFF_THRESHOLD = 60 * 60
 MIN_CALL_DURATION = 60
@@ -44,11 +45,12 @@ MEETING_URL_PATTERNS = {
 
 BANNER = """\
 ============================================================
-Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)
+Luxafor Call Monitor - VERSION 8.0
 ============================================================
 Status Colors:
   🔴 RED    - On a call (DO NOT DISTURB)
-  🟢 GREEN  - Available
+  🟡 YELLOW - Active at computer
+  🟢 GREEN  - Stepped away (5-30 min inactive)
   🔵 BLUE   - Idle/Away (30+ min inactive)
   ⚫ OFF    - Long idle (60+ min inactive)
 
@@ -135,6 +137,10 @@ class LuxaforController:
     def set_green(self):
         """Set LED to green (available)."""
         self.set_color(0, 255, 0)
+
+    def set_yellow(self):
+        """Set LED to yellow (active at computer)."""
+        self.set_color(255, 255, 0)
 
     def set_blue(self):
         """Set LED to blue (idle/away)."""
@@ -371,8 +377,23 @@ class CallDetector:
         return is_call
 
     def check_telegram_status(self):
-        """Check if Telegram has a call."""
-        return self._check_messaging_app("Telegram")
+        """Check if Telegram has a call (title-only, no window count)."""
+        script = '''
+        tell application "System Events"
+            if exists (process "Telegram") then
+                set windowList to name of every window of process "Telegram"
+                repeat with windowName in windowList
+                    if windowName contains "Call" or windowName contains "call" or windowName contains "Calling" then
+                        return "YES"
+                    end if
+                end repeat
+            end if
+            return "NO"
+        end tell
+        '''
+        is_call = self._run_script(script) == "YES"
+        self._debug_log("Telegram", is_call, "title-only")
+        return is_call
 
     def check_whatsapp_status(self):
         """Check if WhatsApp has a call."""
@@ -490,6 +511,7 @@ class StatusMonitor:
         self.idle_detector = idle_detector
 
         self.on_call = False
+        self.is_active = True
         self.is_idle = False
         self.is_off = False
         self.call_start_time = None
@@ -508,25 +530,27 @@ class StatusMonitor:
         suffix = f" on {platform_name}" if platform_name else ""
         self.log("🔴", f"On call{suffix}")
         self.on_call = True
+        self.is_active = False
         self.is_idle = False
         self.is_off = False
 
     def _handle_call_end(self):
-        """Transition back to available after a call."""
-        self.luxafor.set_green()
+        """Transition back to active after a call (user was just at computer)."""
+        self.luxafor.set_yellow()
         tag = f" [{self.current_platform}]" if self.current_platform else ""
 
         if self.call_start_time:
             duration = int(time.time() - self.call_start_time)
             if duration >= MIN_CALL_DURATION:
                 dur = _format_duration(duration)
-                self.log("🟢", f"Available{tag} (call ended - duration: {dur})")
+                self.log("🟡", f"Active{tag} (call ended - duration: {dur})")
             else:
-                self.log("🟢", f"Available{tag} (call ended)")
+                self.log("🟡", f"Active{tag} (call ended)")
         else:
-            self.log("🟢", f"Available{tag} (call ended)")
+            self.log("🟡", f"Active{tag} (call ended)")
 
         self.on_call = False
+        self.is_active = True
         self.call_start_time = None
         self.current_platform = None
 
@@ -539,6 +563,7 @@ class StatusMonitor:
                 self.log("⚫", f"Off ({reason})")
                 self.is_off = True
                 self.is_idle = False
+                self.is_active = False
 
         elif idle_seconds >= IDLE_THRESHOLD:
             if not self.is_idle:
@@ -546,10 +571,20 @@ class StatusMonitor:
                 self.log("🔵", f"Idle/Away ({int(idle_seconds // 60)} min inactive)")
                 self.is_idle = True
                 self.is_off = False
+                self.is_active = False
 
-        elif self.is_idle or self.is_off:
-            self.luxafor.set_green()
-            self.log("🟢", "Available")
+        elif idle_seconds >= ACTIVE_THRESHOLD:
+            if self.is_active:
+                self.luxafor.set_green()
+                self.log("🟢", "Stepped away")
+                self.is_active = False
+                self.is_idle = False
+                self.is_off = False
+
+        elif not self.is_active:
+            self.luxafor.set_yellow()
+            self.log("🟡", "Active")
+            self.is_active = True
             self.is_idle = False
             self.is_off = False
 
@@ -603,7 +638,7 @@ def _get_brightness(args):
 def main():  # pylint: disable=too-many-locals
     """Main entry point: parse args, set up components, run loop."""
     parser = argparse.ArgumentParser(
-        description='Luxafor Call Monitor - VERSION 7.0 (OPTIMIZED)',
+        description='Luxafor Call Monitor - VERSION 8.0',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -630,8 +665,8 @@ def main():  # pylint: disable=too-many-locals
 
     print()
     monitor = StatusMonitor(luxafor, call_detector, idle_detector)
-    luxafor.set_green()
-    monitor.log("🟢", "Available")
+    luxafor.set_yellow()
+    monitor.log("🟡", "Active")
 
     try:
         while True:

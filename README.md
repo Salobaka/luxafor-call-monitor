@@ -1,39 +1,30 @@
-# 🚨 Luxafor Automatic Call Indicator - VERSION 7.0 (OPTIMIZED)
+# 🚨 Luxafor Automatic Call Indicator - VERSION 8.0
 
-Turn your Luxafor **RED** during calls, **GREEN** when available, **BLUE** when idle, **OFF** when away!
+Turn your Luxafor **RED** during calls, **YELLOW** when active, **GREEN** when stepped away, **BLUE** when idle, **OFF** when away!
 
-## ⭐ What's New in Version 7.0
+## ⭐ What's New in Version 8.0
 
-**OPTIMIZED FOR EFFICIENCY! 🚀**
-- ⚡ **40% fewer system calls** - Idle detection cached (checked every 30s, not every 3s)
-- 🔋 **Better battery life** - Reduced CPU usage by ~50%
-- 📊 **Smarter checking** - Calls checked every 3s, idle every 30s
-- 🎯 **Same reliability** - All features preserved, just more efficient!
-- 📱 **Platform display** - Shows which platform you're calling on (Telegram, Zoom, Teams, etc.)
+**NEW: Yellow "Active" Status! 🟡**
+- 🟡 **Active at computer** - Yellow LED when you're using the computer but not on a call
+- 🟢 **Stepped away** - Green LED after 5 minutes of inactivity (previously meant "available")
+- Colleagues can now distinguish "busy working" from "stepped away"
 
-**Performance Improvements:**
-- System calls reduced from 2,400/hour → 360/hour (85% reduction)
-- CPU usage: 2-3% → 1-2% average
-- Battery impact: 2-3%/hour → 1%/hour
-
-**New Features:**
-- 🎯 **Call platform detection** - Displays which app/platform is being used
-  - Example: `🔴 On call on Telegram - DO NOT DISTURB`
-  - Example: `🟢 Available [Zoom] (call ended - duration: 15m 30s)`
-- 🏷️ **Browser tab labeling** - Shows which service is active in browser
-  - Example: `🔴 On call on Chrome (Google Meet) - DO NOT DISTURB`
-  - Example: `🟢 Available [Safari (Teams)] (call ended - duration: 45m 12s)`
-- 📱 **Signal support** - Now detects Signal desktop app calls
-- 💡 **Brightness control** - Adjustable LED brightness (0-100%, default 75%)
-  - Use `--brightness 50` or set interactively at startup
-  - Perfect for adjusting to room lighting conditions
+**Example Output:**
+```
+[10:00:00] 🟡 Active
+[10:30:00] 🟢 Stepped away
+[10:31:00] 🟡 Active
+[10:35:00] 🔴 On call on Zoom (Desktop App)
+[10:50:00] 🟡 Active [Zoom (Desktop App)] (call ended - duration: 15m 0s)
+```
 
 ## 📊 Status Colors
 
 | Color | Status | Trigger |
 |-------|--------|---------|
 | 🔴 **RED** | On a call (DO NOT DISTURB) | Any call detected |
-| 🟢 **GREEN** | Available and active | Mouse/keyboard activity detected |
+| 🟡 **YELLOW** | Active at computer | Idle < 5 min, not on call |
+| 🟢 **GREEN** | Stepped away | 5-30 minutes of inactivity |
 | 🔵 **BLUE** | Idle/Away | 30+ minutes of inactivity |
 | ⚫ **OFF** | Long idle | 60+ minutes OR screen locked |
 
@@ -45,14 +36,16 @@ Turn your Luxafor **RED** during calls, **GREEN** when available, **BLUE** when 
 - Updates every 3 seconds (optimized: idle checked every 30s)
 
 **Status Transitions:**
-1. **Active (GREEN)** → After any mouse/keyboard activity
-2. **Idle (BLUE)** → After 30 minutes of no activity
-3. **Off (BLACK)** → After 60 minutes OR when screen is locked
-4. **Available (GREEN)** → Immediately when you move the mouse or type
+1. **Active (YELLOW)** → Idle < 5 minutes (using the computer)
+2. **Stepped away (GREEN)** → 5-30 minutes of no activity
+3. **Idle (BLUE)** → After 30 minutes of no activity
+4. **Off (BLACK)** → After 60 minutes OR when screen is locked
+5. **Active (YELLOW)** → Immediately when you move the mouse or type
 
 **Priority System:**
 - 🔴 **Calls always take priority** - Even if idle, joining a call turns it RED
-- 🟢 **Activity resets idle timer** - Any movement brings you back to GREEN
+- 🟡 **Activity shows yellow** - Using the computer shows you're busy working
+- 🟢 **Stepped away is green** - 5+ min idle means you stepped away briefly
 - 🔵 **Idle is automatic** - No manual status setting needed
 
 ## 🎯 Supported Platforms
@@ -104,12 +97,12 @@ When asked:
 - Enable debug mode (type `y`) to see detection details
 
 ### 4️⃣ Join a Call
-That's it! Your Luxafor will automatically turn 🔴 **RED** when you join a call and 🟢 **GREEN** when available.
+That's it! Your Luxafor will automatically turn 🔴 **RED** when you join a call and 🟡 **YELLOW** when active.
 
 **Example Output:**
 ```
 [15:05:30] 🔴 On call on Telegram - DO NOT DISTURB
-[15:08:45] 🟢 Available [Telegram] (call ended - duration: 3m 15s)
+[15:08:45] 🟡 Active [Telegram] (call ended - duration: 3m 15s)
 ```
 
 The monitor will show which platform you're using (Telegram, Zoom, Microsoft Teams, Slack Huddle, WhatsApp, or browser name).
@@ -127,7 +120,7 @@ Press `Ctrl+C` in the Terminal window
 
 ## 📖 How It Works
 
-**Version 7.0** uses multiple detection methods with optimized performance:
+**Version 8.0** uses multiple detection methods with optimized performance:
 
 ### Desktop Apps - Window Title Detection
 **Zoom:**
@@ -396,8 +389,9 @@ Go to **System Preferences → Security & Privacy → Privacy**:
 ## 💡 Tips
 
 1. **Calls take priority** - Even if idle, joining a call turns Luxafor RED
-2. **Any activity resets idle** - Moving mouse or typing brings you back to GREEN
-3. **Screen lock = instant off** - Luxafor turns off when you lock your Mac
+2. **Activity shows yellow** - Moving mouse or typing brings you back to YELLOW
+3. **Stepped away is green** - 5+ min idle transitions to GREEN
+4. **Screen lock = instant off** - Luxafor turns off when you lock your Mac
 4. **Debug mode is helpful** - Use it to see exactly what's being detected
 5. **Run at startup** - See auto-start instructions above
 
@@ -435,11 +429,17 @@ When debug mode is enabled, you'll see:
 Even with optimizations, these remain instant:
 - ✅ **Call detection**: Still checks every 3 seconds
 - ✅ **Status changes**: Immediate (RED when call starts)
-- ✅ **Activity detection**: Returns to GREEN in 30 seconds max
+- ✅ **Activity detection**: Returns to YELLOW in 30 seconds max
 
 ## 📋 Version History
 
-### Version 7.0 (Current) - February 2026
+### Version 8.0 (Current) - February 2026
+**NEW: Yellow "Active" Status**
+- 🟡 Yellow LED when actively using computer (idle < 5 min)
+- 🟢 Green now means "stepped away" (idle 5-30 min)
+- Colleagues can distinguish "busy working" from "stepped away"
+
+### Version 7.0 - February 2026
 **OPTIMIZED FOR EFFICIENCY**
 - ⚡ 40% fewer system calls
 - 🔋 50% reduced CPU usage
@@ -495,7 +495,7 @@ Even with optimizations, these remain instant:
 
 ## 📝 Files Included
 
-- `luxafor_call_monitor.py` - **VERSION 7.0 - OPTIMIZED!** (Use this one!)
+- `luxafor_call_monitor.py` - **VERSION 8.0** (Use this one!)
 - `test_all_platforms.py` - Comprehensive platform test
 - `test_browser_detection.py` - Browser detection test
 - `README.md` - Complete documentation (this file)
@@ -504,5 +504,5 @@ Even with optimizations, these remain instant:
 
 **Note**: The script needs to run continuously in the background. Keep the Terminal window open or set it up to auto-start at login.
 
-**Version**: 7.0
+**Version**: 8.0
 **Last Updated**: February 2026
